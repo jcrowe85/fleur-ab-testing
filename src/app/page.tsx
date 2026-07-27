@@ -1,65 +1,276 @@
-import Image from "next/image";
+import { getTestReport, listTests, type MetricRow, type TestReport } from "@/lib/metrics";
 
-export default function Home() {
+export const dynamic = "force-dynamic";
+
+const pct = (v: number) => `${(v * 100).toFixed(2)}%`;
+const signedPct = (v: number) => `${v >= 0 ? "+" : ""}${(v * 100).toFixed(2)}%`;
+const num = (v: number) => v.toLocaleString("en-US");
+const money = (v: number) =>
+  v.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
+
+function Stat({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
+    <div className="rounded-lg border border-black/10 dark:border-white/15 p-4">
+      <div className="text-xs uppercase tracking-wide opacity-60">{label}</div>
+      <div className="mt-1 text-2xl font-semibold tabular-nums">{value}</div>
+      {sub ? <div className="mt-0.5 text-xs opacity-60">{sub}</div> : null}
     </div>
+  );
+}
+
+/** The verdict cell. Deliberately verbose — a bare p-value invites over-reading. */
+function Verdict({
+  row,
+  isPrimary,
+  windowComplete,
+}: {
+  row: MetricRow;
+  isPrimary: boolean;
+  windowComplete: boolean;
+}) {
+  const c = row.comparison;
+
+  if (c.underpowered) {
+    return (
+      <span className="text-amber-700 dark:text-amber-400">
+        Not enough data
+        {row.requiredPerArm ? (
+          <span className="opacity-70"> · need ~{num(row.requiredPerArm)}/arm for a 10% lift</span>
+        ) : null}
+      </span>
+    );
+  }
+
+  if (!c.significant) {
+    return (
+      <span className="opacity-70">
+        No difference detected
+        {c.pValue !== null ? <span className="tabular-nums"> · p={c.pValue.toFixed(3)}</span> : null}
+      </span>
+    );
+  }
+
+  // Significant. If the planned window is not over, say so plainly: stopping
+  // the moment a threshold is crossed is what turns a 5% false-positive rate
+  // into 20-30%, and it is the easiest way to be fooled by this page.
+  const dir = c.absoluteDiff > 0 ? "B ahead" : "A ahead";
+  return (
+    <span
+      className={
+        c.absoluteDiff > 0
+          ? "text-emerald-700 dark:text-emerald-400"
+          : "text-rose-700 dark:text-rose-400"
+      }
+    >
+      {dir}
+      <span className="tabular-nums"> · p={c.pValue!.toFixed(3)}</span>
+      {isPrimary && !windowComplete ? (
+        <span className="opacity-70"> · interim, run the full window</span>
+      ) : null}
+    </span>
+  );
+}
+
+function FunnelTable({ report }: { report: TestReport }) {
+  const { totals, rows, test, windowComplete } = report;
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm border-collapse min-w-[860px]">
+        <thead>
+          <tr className="text-left border-b border-black/15 dark:border-white/20">
+            <th className="py-2 pr-4 font-medium">Metric</th>
+            <th className="py-2 px-3 font-medium text-right">A — original</th>
+            <th className="py-2 px-3 font-medium text-right">B — redesign</th>
+            <th className="py-2 px-3 font-medium text-right">Lift</th>
+            <th className="py-2 px-3 font-medium text-right">95% CI (abs.)</th>
+            <th className="py-2 pl-3 font-medium">Reading</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr className="border-b border-black/5 dark:border-white/10">
+            <td className="py-2.5 pr-4 opacity-70">Visitors exposed</td>
+            <td className="py-2.5 px-3 text-right tabular-nums">{num(totals.a.exposures)}</td>
+            <td className="py-2.5 px-3 text-right tabular-nums">{num(totals.b.exposures)}</td>
+            <td className="py-2.5 px-3 text-right opacity-40">—</td>
+            <td className="py-2.5 px-3 text-right opacity-40">—</td>
+            <td className="py-2.5 pl-3 opacity-60">Denominator for every rate below</td>
+          </tr>
+
+          {rows.map((row) => {
+            const isPrimary = row.key === test.primaryMetric;
+            const c = row.comparison;
+            return (
+              <tr key={row.key} className="border-b border-black/5 dark:border-white/10 align-top">
+                <td className="py-2.5 pr-4">
+                  {row.label}
+                  {isPrimary ? (
+                    <span className="ml-2 rounded bg-black/8 dark:bg-white/15 px-1.5 py-0.5 text-[10px] uppercase tracking-wide">
+                      primary
+                    </span>
+                  ) : null}
+                </td>
+                <td className="py-2.5 px-3 text-right tabular-nums">
+                  {num(row.a)}
+                  <div className="text-xs opacity-60">{pct(c.rateA)}</div>
+                </td>
+                <td className="py-2.5 px-3 text-right tabular-nums">
+                  {num(row.b)}
+                  <div className="text-xs opacity-60">{pct(c.rateB)}</div>
+                </td>
+                <td className="py-2.5 px-3 text-right tabular-nums">
+                  {c.relativeLift === null ? "—" : signedPct(c.relativeLift)}
+                </td>
+                <td className="py-2.5 px-3 text-right tabular-nums text-xs opacity-70">
+                  {c.ciLow === null ? "—" : `${signedPct(c.ciLow)} … ${signedPct(c.ciHigh!)}`}
+                </td>
+                <td className="py-2.5 pl-3 text-xs">
+                  <Verdict row={row} isPrimary={isPrimary} windowComplete={windowComplete} />
+                </td>
+              </tr>
+            );
+          })}
+
+          <tr>
+            <td className="py-2.5 pr-4 opacity-70">Revenue</td>
+            <td className="py-2.5 px-3 text-right tabular-nums">{money(totals.a.revenue)}</td>
+            <td className="py-2.5 px-3 text-right tabular-nums">{money(totals.b.revenue)}</td>
+            <td className="py-2.5 px-3 text-right opacity-40">—</td>
+            <td className="py-2.5 px-3 text-right opacity-40">—</td>
+            <td className="py-2.5 pl-3 text-xs opacity-60">
+              Not tested — revenue per visitor is heavy-tailed, so a proportion test does not apply
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+export default async function Dashboard({
+  searchParams,
+}: {
+  searchParams: Promise<{ test?: string }>;
+}) {
+  const { test: requested } = await searchParams;
+  const tests = await listTests();
+  const testKey = requested ?? tests[0]?.key ?? "pdp_redesign_2607";
+  const report = await getTestReport(testKey);
+
+  if (!report) {
+    return (
+      <main className="mx-auto max-w-5xl p-8">
+        <h1 className="text-xl font-semibold">No such test</h1>
+        <p className="mt-2 opacity-70 text-sm">
+          Nothing is declared under <code>{testKey}</code>. Run{" "}
+          <code>node scripts/declare-test.mjs</code> first.
+        </p>
+      </main>
+    );
+  }
+
+  const { test, totals, daysElapsed, daysPlanned, windowComplete, excludedPreStart } = report;
+  const split = totals.a.exposures + totals.b.exposures;
+  const splitPct = split > 0 ? totals.b.exposures / split : 0;
+
+  return (
+    <main className="mx-auto max-w-6xl p-6 sm:p-10">
+      <header className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold">{test.name}</h1>
+          <p className="mt-1 text-sm opacity-60 font-mono">{test.key}</p>
+        </div>
+        {tests.length > 1 ? (
+          <nav className="flex flex-wrap gap-2 text-xs">
+            {tests.map((t) => (
+              <a
+                key={t.key}
+                href={`/?test=${encodeURIComponent(t.key)}`}
+                className={`rounded border px-2 py-1 ${
+                  t.key === test.key
+                    ? "border-black/40 dark:border-white/50"
+                    : "border-black/15 dark:border-white/20 opacity-70"
+                }`}
+              >
+                {t.key}
+              </a>
+            ))}
+          </nav>
+        ) : null}
+      </header>
+
+      {!test.startedAt ? (
+        <p className="mt-6 rounded-lg border border-amber-500/40 bg-amber-500/10 p-4 text-sm">
+          <strong>Declared but not started.</strong> Ingest is live so the theme can be
+          exercised end to end, and {num(excludedPreStart)} event
+          {excludedPreStart === 1 ? " has" : "s have"} been recorded — none of it counts.
+          Run <code>node scripts/declare-test.mjs --start</code> once both arms are deployed.
+        </p>
+      ) : null}
+
+      {test.startedAt && !windowComplete ? (
+        <p className="mt-6 rounded-lg border border-black/15 dark:border-white/20 p-4 text-sm">
+          <strong>
+            Day {daysElapsed} of {daysPlanned}.
+          </strong>{" "}
+          The run length was fixed in advance and powered for{" "}
+          <code>{test.primaryMetric}</code>. Reading the result now and stopping on it is
+          what turns a 5% false-positive rate into 20–30% — the numbers below are for
+          checking that data is arriving, not for calling a winner.
+        </p>
+      ) : null}
+
+      <section className="mt-6 grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <Stat
+          label="Visitors"
+          value={num(split)}
+          sub={`${num(totals.a.exposures)} A · ${num(totals.b.exposures)} B`}
+        />
+        <Stat
+          label="Split"
+          value={split > 0 ? pct(splitPct) : "—"}
+          sub={
+            split === 0
+              ? "no traffic yet"
+              : Math.abs(splitPct - 0.5) > 0.02
+                ? "skewed — check assignment"
+                : "balanced, as expected"
+          }
+        />
+        <Stat
+          label="Orders"
+          value={num(totals.a.purchase + totals.b.purchase)}
+          sub="from Shopify, via cart attribute"
+        />
+        <Stat
+          label="Window"
+          value={test.startedAt ? `${daysElapsed}/${daysPlanned}d` : "not started"}
+          sub={
+            test.stoppedAt
+              ? "stopped"
+              : test.endsAt
+                ? `ends ${test.endsAt.toISOString().slice(0, 10)}`
+                : "—"
+          }
+        />
+      </section>
+
+      <section className="mt-8">
+        <FunnelTable report={report} />
+      </section>
+
+      {test.hypothesis ? (
+        <section className="mt-8 text-sm">
+          <h2 className="font-medium">Hypothesis</h2>
+          <p className="mt-1 opacity-70 leading-relaxed max-w-3xl">{test.hypothesis}</p>
+        </section>
+      ) : null}
+
+      <footer className="mt-10 text-xs opacity-50 leading-relaxed max-w-3xl">
+        Add to cart and initiate checkout are counted once per visitor from the storefront.
+        Purchase is not — it is reconciled from Shopify orders through the{" "}
+        <code>ab_{test.key}</code> cart attribute, because a browser-side purchase event
+        misses anything that completes on the checkout domain.
+      </footer>
+    </main>
   );
 }

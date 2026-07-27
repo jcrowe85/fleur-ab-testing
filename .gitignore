@@ -43,3 +43,6 @@ next-env.d.ts
 # local secrets
 .env
 .env*.local
+
+# demo/scratch
+.next/
