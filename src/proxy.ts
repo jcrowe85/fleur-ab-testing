@@ -16,6 +16,9 @@ export function proxy(req: NextRequest) {
   // Order sync authenticates with CRON_SECRET, not the dashboard cookie.
   if (pathname.startsWith("/api/sync/")) return NextResponse.next();
 
+  // Health check authenticates with CRON_SECRET too.
+  if (pathname.startsWith("/api/health")) return NextResponse.next();
+
   if (pathname.startsWith("/login") || pathname.startsWith("/api/auth/")) {
     return NextResponse.next();
   }
