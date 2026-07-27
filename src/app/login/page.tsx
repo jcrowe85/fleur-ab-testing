@@ -1,3 +1,5 @@
+import { LoginForm } from "./LoginForm";
+
 export const dynamic = "force-dynamic";
 
 export default async function Login({
@@ -12,25 +14,11 @@ export default async function Login({
       <h1 className="text-lg font-semibold">Fleur A/B testing</h1>
       <p className="mt-1 text-sm opacity-60">Internal. Enter the dashboard passphrase.</p>
 
-      <form action="/api/auth/session" method="POST" className="mt-6 flex flex-col gap-3">
-        <input type="hidden" name="from" value={from} />
-        <input
-          type="password"
-          name="passphrase"
-          autoFocus
-          autoComplete="current-password"
-          className="rounded border border-black/20 dark:border-white/25 bg-transparent px-3 py-2 text-sm"
-          placeholder="Passphrase"
-        />
-        <button
-          type="submit"
-          className="rounded bg-black px-3 py-2 text-sm text-white dark:bg-white dark:text-black"
-        >
-          Sign in
-        </button>
-      </form>
+      <LoginForm from={from} />
 
-      {error ? <p className="mt-3 text-sm text-rose-600 dark:text-rose-400">Incorrect passphrase.</p> : null}
+      {error ? (
+        <p className="mt-3 text-sm text-rose-600 dark:text-rose-400">Incorrect passphrase.</p>
+      ) : null}
     </main>
   );
 }
