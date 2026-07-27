@@ -21,13 +21,20 @@ export function LoginForm({ from }: { from: string }) {
       className="mt-6 flex flex-col gap-3"
     >
       <input type="hidden" name="from" value={from} />
+      {/*
+        readOnly, never disabled. A disabled control is omitted from the form
+        data entirely, and setting pending on submit re-renders this input
+        before the browser has serialised the form — so the passphrase arrived
+        empty and every correct password was rejected. readOnly locks the field
+        without removing it from the submission.
+      */}
       <input
         type="password"
         name="passphrase"
         autoFocus
         autoComplete="current-password"
-        disabled={pending}
-        className="rounded border border-black/20 dark:border-white/25 bg-transparent px-3 py-2 text-sm disabled:opacity-50"
+        readOnly={pending}
+        className="rounded border border-black/20 dark:border-white/25 bg-transparent px-3 py-2 text-sm read-only:opacity-50"
         placeholder="Passphrase"
       />
       <button

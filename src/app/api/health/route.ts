@@ -39,6 +39,16 @@ function describeUrl(raw: string | undefined) {
   }
 }
 
+function describeSecret(raw: string | undefined) {
+  if (!raw) return { set: false, note: "unset — login falls back to SESSION_SECRET" };
+  return {
+    set: true,
+    length: raw.length,
+    wrappedInQuotes: /^["'].*["']$/.test(raw),
+    hasSurroundingWhitespace: raw !== raw.trim(),
+  };
+}
+
 export async function GET(req: Request) {
   const secret = process.env.CRON_SECRET;
   if (!secret || req.headers.get("authorization") !== `Bearer ${secret}`) {
@@ -52,7 +62,11 @@ export async function GET(req: Request) {
     SHOPIFY_API_VERSION: process.env.SHOPIFY_API_VERSION ?? null,
     SHOPIFY_ADMIN_ACCESS_TOKEN: process.env.SHOPIFY_ADMIN_ACCESS_TOKEN ? "set" : "MISSING",
     SESSION_SECRET: process.env.SESSION_SECRET ? "set" : "MISSING",
-    DASHBOARD_PASSWORD: process.env.DASHBOARD_PASSWORD ? "set" : "unset (falls back)",
+    // Shape only, never the value. Length plus the two ways a paste goes wrong
+    // is enough to explain a rejected password without printing it: a value
+    // saved with its surrounding quotes, or with whitespace a copy picked up,
+    // compares unequal while looking identical in the Vercel UI.
+    DASHBOARD_PASSWORD: describeSecret(process.env.DASHBOARD_PASSWORD),
     ALLOWED_EVENT_ORIGINS: process.env.ALLOWED_EVENT_ORIGINS ?? null,
   };
 
