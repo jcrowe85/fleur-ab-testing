@@ -1,0 +1,79 @@
+// Fleur A/B testing — split-test assignment, funnel capture and results.
+//
+// Deliberately separate from fleur-financials: the ingest endpoint is publicly
+// writable (shoppers' browsers call it), and that does not belong in the app
+// holding the Shopify/Meta/Amazon keys and the financial data.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+/// A running or finished experiment. Kept as a row rather than a constant so
+/// the ingest endpoint can reject events for unknown or already-stopped tests,
+/// and so the stopping rule is recorded *before* any data arrives — deciding it
+/// afterwards is how peeking creeps in.
+model AbTest {
+  key            String    @id /// e.g. "pdp_redesign_2607" — matches the theme cookie
+  name           String
+  hypothesis     String?
+  primaryMetric  String    @default("add_to_cart") /// the metric the run length was powered for
+  plannedDays    Int       @default(21)
+  startedAt      DateTime?
+  endsAt         DateTime?
+  stoppedAt      DateTime?
+  createdAt      DateTime  @default(now())
+
+  events AbEvent[]
+  orders AbOrder[]
+}
+
+/// One row per funnel event beaconed from the storefront. Purchases are NOT
+/// here — they arrive via the order sync, which reads the bucket back off the
+/// order's cart attribute.
+///
+/// `visitorId` is an anonymous random id set alongside the bucket cookie. Rates
+/// are computed per visitor, not per row: without it a shopper who views the
+/// PDP five times would count five times in the denominator.
+model AbEvent {
+  id        String   @id @default(cuid())
+  test      String
+  bucket    String /// "a" | "b"
+  visitorId String
+  event     String /// "exposure" | "add_to_cart" | "initiate_checkout"
+  path      String?
+  template  String?
+  createdAt DateTime @default(now())
+
+  abTest AbTest @relation(fields: [test], references: [key], onDelete: Cascade)
+
+  /// One row per visitor per event type — a repeat add-to-cart from the same
+  /// shopper must not inflate the numerator.
+  @@unique([test, visitorId, event])
+  @@index([test, event, bucket])
+  @@index([createdAt])
+}
+
+/// Orders attributed to an arm via the bucket stamped into the cart attribute.
+/// Sourced from Shopify rather than the browser — this is the only
+/// revenue-grade number in the test.
+model AbOrder {
+  id         String   @id /// Shopify order id
+  test       String
+  bucket     String
+  orderName  String
+  visitorId  String?
+  totalPrice Decimal  @db.Decimal(12, 2)
+  currency   String   @default("USD")
+  placedAt   DateTime
+  syncedAt   DateTime @default(now())
+
+  abTest AbTest @relation(fields: [test], references: [key], onDelete: Cascade)
+
+  @@index([test, bucket, placedAt])
+}
