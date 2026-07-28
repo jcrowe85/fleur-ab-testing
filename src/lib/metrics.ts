@@ -33,6 +33,31 @@ export interface MetricRow {
   requiredPerArm: number | null;
 }
 
+/** New visitors entering the test on one UTC day, per arm. */
+export interface DailyNewVisitors {
+  day: string;
+  a: number;
+  b: number;
+  /** The binding arm — the target has to be met by both, so the smaller one paces the run. */
+  perArm: number;
+}
+
+/**
+ * Whether the planned window will actually deliver the sample the primary metric
+ * was powered for. The exposure row is written once per visitor for the life of
+ * the cookie, so these are *new* visitors: a returning shopper adds nothing. That
+ * makes the daily figure decay as the audience is used up, and a straight-line
+ * projection the optimistic bound rather than the expected one.
+ */
+export interface Pacing {
+  requiredPerArm: number | null;
+  perArmNow: number;
+  perArmPerDay: number | null;
+  projectedPerArm: number | null;
+  daysRemaining: number;
+  daily: DailyNewVisitors[];
+}
+
 export interface TestReport {
   test: {
     key: string;
@@ -52,7 +77,12 @@ export interface TestReport {
   windowComplete: boolean;
   /** Events recorded before the test was started, excluded from every number above. */
   excludedPreStart: number;
+  /** Null until the test is started — there is nothing to pace against before then. */
+  pacing: Pacing | null;
 }
+
+/** Below this, the elapsed slice is too thin for a daily rate to mean anything. */
+const MIN_DAYS_TO_PROJECT = 0.25;
 
 function emptyTotals(bucket: Bucket): ArmTotals {
   return {
@@ -76,7 +106,7 @@ export async function getTestReport(testKey: string): Promise<TestReport | null>
   const to = test.stoppedAt ?? undefined;
   const window = from || to ? { gte: from, lte: to } : undefined;
 
-  const [eventGroups, orderGroups, excludedPreStart] = await Promise.all([
+  const [eventGroups, orderGroups, excludedPreStart, dailyRows] = await Promise.all([
     db.abEvent.groupBy({
       by: ["bucket", "event"],
       where: { test: testKey, ...(window ? { createdAt: window } : {}) },
@@ -91,6 +121,20 @@ export async function getTestReport(testKey: string): Promise<TestReport | null>
     test.startedAt
       ? db.abEvent.count({ where: { test: testKey, createdAt: { lt: test.startedAt } } })
       : db.abEvent.count({ where: { test: testKey } }),
+    // New visitors per day. Grouped on the exposure row, which the
+    // [test, visitorId, event] unique index writes exactly once per visitor, so
+    // this is arrivals — not sessions, and not the same shopper coming back.
+    test.startedAt
+      ? db.$queryRaw<{ day: Date; bucket: string; n: number }[]>`
+          SELECT date_trunc('day', "createdAt") AS day, bucket, count(*)::int AS n
+          FROM "AbEvent"
+          WHERE test = ${testKey}
+            AND event = 'exposure'
+            AND "createdAt" >= ${test.startedAt}
+            AND "createdAt" <= ${test.stoppedAt ?? new Date()}
+          GROUP BY 1, 2
+          ORDER BY 1`
+      : Promise.resolve([]),
   ]);
 
   const totals = {
@@ -129,9 +173,40 @@ export async function getTestReport(testKey: string): Promise<TestReport | null>
   });
 
   const now = Date.now();
-  const daysElapsed = test.startedAt
-    ? Math.max(0, Math.floor(((test.stoppedAt?.getTime() ?? now) - test.startedAt.getTime()) / 864e5))
+  const elapsedDaysExact = test.startedAt
+    ? Math.max(0, ((test.stoppedAt?.getTime() ?? now) - test.startedAt.getTime()) / 864e5)
     : null;
+  const daysElapsed = elapsedDaysExact === null ? null : Math.floor(elapsedDaysExact);
+
+  let pacing: Pacing | null = null;
+  if (test.startedAt && elapsedDaysExact !== null) {
+    const byDay = new Map<string, DailyNewVisitors>();
+    for (const r of dailyRows) {
+      const day = r.day.toISOString().slice(0, 10);
+      const entry = byDay.get(day) ?? { day, a: 0, b: 0, perArm: 0 };
+      if (r.bucket === "a" || r.bucket === "b") entry[r.bucket] = r.n;
+      entry.perArm = Math.min(entry.a, entry.b);
+      byDay.set(day, entry);
+    }
+
+    // The target has to be cleared by both arms, so the smaller one is the one
+    // that decides whether the window is long enough.
+    const perArmNow = Math.min(totals.a.exposures, totals.b.exposures);
+    const canProject = elapsedDaysExact >= MIN_DAYS_TO_PROJECT;
+    const perArmPerDay = canProject ? perArmNow / elapsedDaysExact : null;
+    const daysRemaining = Math.max(0, test.plannedDays - elapsedDaysExact);
+    const primary = rows.find((r) => r.key === test.primaryMetric);
+
+    pacing = {
+      requiredPerArm: primary?.requiredPerArm ?? null,
+      perArmNow,
+      perArmPerDay,
+      projectedPerArm:
+        perArmPerDay === null ? null : Math.round(perArmNow + perArmPerDay * daysRemaining),
+      daysRemaining,
+      daily: [...byDay.values()].sort((x, y) => x.day.localeCompare(y.day)),
+    };
+  }
 
   return {
     test: {
@@ -150,6 +225,7 @@ export async function getTestReport(testKey: string): Promise<TestReport | null>
     daysPlanned: test.plannedDays,
     windowComplete: daysElapsed !== null && daysElapsed >= test.plannedDays,
     excludedPreStart,
+    pacing,
   };
 }
 

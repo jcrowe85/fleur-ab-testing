@@ -1,4 +1,10 @@
-import { getTestReport, listTests, type MetricRow, type TestReport } from "@/lib/metrics";
+import {
+  getTestReport,
+  listTests,
+  type MetricRow,
+  type Pacing,
+  type TestReport,
+} from "@/lib/metrics";
 
 export const dynamic = "force-dynamic";
 
@@ -14,6 +20,119 @@ function Stat({ label, value, sub }: { label: string; value: string; sub?: strin
       <div className="text-xs uppercase tracking-wide opacity-60">{label}</div>
       <div className="mt-1 text-2xl font-semibold tabular-nums">{value}</div>
       {sub ? <div className="mt-0.5 text-xs opacity-60">{sub}</div> : null}
+    </div>
+  );
+}
+
+/**
+ * Progress toward the sample the primary metric was powered for.
+ *
+ * A meter, not a chart: one ratio against a limit. The solid fill is what has
+ * arrived, the wash is where the current rate lands by the end of the window,
+ * and the full track is the target — so a run that will finish short shows a
+ * visible gap at the right-hand end.
+ */
+function PacingMeter({ pacing, endsAt }: { pacing: Pacing; endsAt: Date | null }) {
+  const { requiredPerArm, perArmNow, perArmPerDay, projectedPerArm, daily } = pacing;
+
+  if (!requiredPerArm) {
+    return (
+      <p className="text-sm opacity-60">
+        No sample target yet — it is powered off the control&apos;s observed rate, which needs
+        a few conversions first.
+      </p>
+    );
+  }
+
+  const clamp = (v: number) => Math.max(0, Math.min(100, v));
+  // A sliver of fill still has to be visible on day one, or the meter reads as empty.
+  const nowPct = Math.max(clamp((perArmNow / requiredPerArm) * 100), 0.6);
+  const projPct = projectedPerArm === null ? nowPct : clamp((projectedPerArm / requiredPerArm) * 100);
+
+  const ratio = projectedPerArm === null ? null : projectedPerArm / requiredPerArm;
+  const state =
+    ratio === null
+      ? { dot: "#898781", text: "too early to project" }
+      : ratio >= 1
+        ? { dot: "#0ca30c", text: "on track" }
+        : ratio >= 0.8
+          ? { dot: "#fab219", text: "borderline" }
+          : { dot: "#d03b3b", text: "will finish short" };
+
+  const maxDay = Math.max(1, ...daily.map((d) => d.perArm));
+
+  return (
+    <div className="rounded-lg border border-black/10 dark:border-white/15 p-4 sm:p-5">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+        <h2 className="text-sm font-medium">Sample pacing</h2>
+        <span className="flex items-center gap-1.5 text-xs">
+          <span
+            aria-hidden
+            className="inline-block size-2 rounded-full"
+            style={{ backgroundColor: state.dot }}
+          />
+          {state.text}
+        </span>
+      </div>
+
+      <div className="mt-3 relative h-2.5 rounded-full bg-[#cde2fb] dark:bg-[#184f95]">
+        {/* Projection, offset by a 2px surface gap so it never touches the solid fill. */}
+        {projPct > nowPct ? (
+          <div
+            className="absolute inset-y-0 rounded-r-full bg-[#2a78d6]/30 dark:bg-[#3987e5]/35"
+            style={{ left: `calc(${nowPct}% + 2px)`, width: `calc(${projPct - nowPct}% - 2px)` }}
+          />
+        ) : null}
+        <div
+          className="absolute inset-y-0 left-0 rounded-full bg-[#2a78d6] dark:bg-[#3987e5]"
+          style={{ width: `${nowPct}%` }}
+        />
+      </div>
+
+      <div className="mt-2.5 flex flex-wrap justify-between gap-x-4 gap-y-1 text-xs">
+        <span className="tabular-nums">
+          <strong className="font-semibold">{num(perArmNow)}</strong>
+          <span className="opacity-60"> visitors per arm so far</span>
+        </span>
+        <span className="tabular-nums opacity-70">
+          target ~{num(requiredPerArm)} per arm
+        </span>
+      </div>
+
+      <p className="mt-3 text-xs opacity-70 leading-relaxed">
+        {projectedPerArm !== null && perArmPerDay !== null ? (
+          <>
+            Arriving at ~{num(Math.round(perArmPerDay))} new visitors per arm per day, which
+            reaches <strong className="font-semibold tabular-nums">~{num(projectedPerArm)}</strong>{" "}
+            by {endsAt ? endsAt.toISOString().slice(0, 10) : "the end of the window"}.{" "}
+          </>
+        ) : (
+          <>Too little of the window has elapsed to estimate a daily rate. </>
+        )}
+        Read the projection as a ceiling: a visitor is counted once for the life of their
+        cookie, so as the audience is used up, fewer of each day&apos;s visitors are new.
+      </p>
+
+      {daily.length >= 3 ? (
+        <div className="mt-4">
+          <div className="flex items-end gap-[2px] h-12" role="img" aria-label="New visitors per arm, by day">
+            {daily.map((d) => (
+              <div
+                key={d.day}
+                title={`${d.day} · ${num(d.perArm)} per arm`}
+                className="flex-1 max-w-6 rounded-t-[4px] bg-[#2a78d6] dark:bg-[#3987e5]"
+                style={{ height: `${Math.max(2, (d.perArm / maxDay) * 100)}%` }}
+              />
+            ))}
+          </div>
+          <div className="mt-1.5 flex justify-between text-[11px] opacity-60 tabular-nums">
+            <span>{daily[0].day}</span>
+            <span>
+              {daily[daily.length - 1].day} · {num(daily[daily.length - 1].perArm)}
+            </span>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -168,7 +287,8 @@ export default async function Dashboard({
     );
   }
 
-  const { test, totals, daysElapsed, daysPlanned, windowComplete, excludedPreStart } = report;
+  const { test, totals, daysElapsed, daysPlanned, windowComplete, excludedPreStart, pacing } =
+    report;
   const split = totals.a.exposures + totals.b.exposures;
   const splitPct = split > 0 ? totals.b.exposures / split : 0;
 
@@ -253,6 +373,12 @@ export default async function Dashboard({
           }
         />
       </section>
+
+      {pacing && !windowComplete ? (
+        <section className="mt-6">
+          <PacingMeter pacing={pacing} endsAt={test.endsAt} />
+        </section>
+      ) : null}
 
       <section className="mt-8">
         <FunnelTable report={report} />
