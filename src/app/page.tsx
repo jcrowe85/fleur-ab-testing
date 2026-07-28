@@ -190,16 +190,65 @@ function Verdict({
   );
 }
 
+/**
+ * Opens the page under test with the arm forced.
+ *
+ * `?ab=a` is the theme's QA override, and it is not read-only: it writes the
+ * assignment cookie and the visit records an exposure like any other. Hence the
+ * warning in the tooltip — a spot-check from a normal window puts you in the
+ * denominator of your own test.
+ */
+function ArmLink({ bucket, surfaceUrl }: { bucket: "a" | "b"; surfaceUrl: string | null }) {
+  if (!surfaceUrl) return null;
+  const arm = bucket.toUpperCase();
+  const href = `${surfaceUrl}${surfaceUrl.includes("?") ? "&" : "?"}ab=${bucket}`;
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      aria-label={`Open arm ${arm} on the live storefront in a new tab`}
+      title={`Open arm ${arm} on the live storefront. Forcing an arm sets the assignment cookie and records an exposure — use a private window.`}
+      className="inline-flex size-5 shrink-0 items-center justify-center rounded opacity-45 transition hover:bg-black/5 hover:opacity-100 dark:hover:bg-white/10"
+    >
+      <svg
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className="size-3.5"
+        aria-hidden
+      >
+        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+        <polyline points="15 3 21 3 21 9" />
+        <line x1="10" y1="14" x2="21" y2="3" />
+      </svg>
+    </a>
+  );
+}
+
 function FunnelTable({ report }: { report: TestReport }) {
-  const { totals, rows, test, windowComplete } = report;
+  const { totals, rows, test, windowComplete, surfaceUrl } = report;
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-sm border-collapse min-w-[860px]">
         <thead>
           <tr className="text-left border-b border-black/15 dark:border-white/20">
             <th className="py-2 pr-4 font-medium">Metric</th>
-            <th className="py-2 px-3 font-medium text-right">A — original</th>
-            <th className="py-2 px-3 font-medium text-right">B — redesign</th>
+            <th className="py-2 px-3 font-medium text-right">
+              <span className="inline-flex items-center gap-1.5">
+                A — original
+                <ArmLink bucket="a" surfaceUrl={surfaceUrl} />
+              </span>
+            </th>
+            <th className="py-2 px-3 font-medium text-right">
+              <span className="inline-flex items-center gap-1.5">
+                B — redesign
+                <ArmLink bucket="b" surfaceUrl={surfaceUrl} />
+              </span>
+            </th>
             <th className="py-2 px-3 font-medium text-right">Lift</th>
             <th className="py-2 px-3 font-medium text-right">95% CI (abs.)</th>
             <th className="py-2 pl-3 font-medium">Reading</th>

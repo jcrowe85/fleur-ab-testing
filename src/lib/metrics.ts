@@ -3,7 +3,7 @@
  */
 
 import { db } from "@/lib/db";
-import { BUCKETS, FUNNEL_EVENTS, type Bucket } from "@/lib/ab";
+import { allowedOrigins, BUCKETS, FUNNEL_EVENTS, type Bucket } from "@/lib/ab";
 import { compareProportions, requiredSamplePerArm, type Comparison } from "@/lib/stats";
 
 export type MetricKey = "add_to_cart" | "initiate_checkout" | "purchase";
@@ -79,6 +79,13 @@ export interface TestReport {
   excludedPreStart: number;
   /** Null until the test is started — there is nothing to pace against before then. */
   pacing: Pacing | null;
+  /**
+   * The live page the test renders on. Read back from the exposure events
+   * rather than configured, so it cannot drift out of step with where the
+   * variant is actually being served. Null if nothing has been recorded yet,
+   * or if no storefront origin is configured.
+   */
+  surfaceUrl: string | null;
 }
 
 /** Below this, the elapsed slice is too thin for a daily rate to mean anything. */
@@ -106,7 +113,7 @@ export async function getTestReport(testKey: string): Promise<TestReport | null>
   const to = test.stoppedAt ?? undefined;
   const window = from || to ? { gte: from, lte: to } : undefined;
 
-  const [eventGroups, orderGroups, excludedPreStart, dailyRows] = await Promise.all([
+  const [eventGroups, orderGroups, excludedPreStart, dailyRows, surfaceRows] = await Promise.all([
     db.abEvent.groupBy({
       by: ["bucket", "event"],
       where: { test: testKey, ...(window ? { createdAt: window } : {}) },
@@ -135,6 +142,17 @@ export async function getTestReport(testKey: string): Promise<TestReport | null>
           GROUP BY 1, 2
           ORDER BY 1`
       : Promise.resolve([]),
+    // The busiest exposure path is the page under test. The surface marker only
+    // fires where the variant is on screen, so this is the page itself rather
+    // than every product template in the store. Trailing slashes are folded in
+    // so one page does not split its own count across two spellings.
+    db.$queryRaw<{ path: string }[]>`
+      SELECT COALESCE(NULLIF(regexp_replace(path, '/+$', ''), ''), '/') AS path
+      FROM "AbEvent"
+      WHERE test = ${testKey} AND event = 'exposure' AND path IS NOT NULL
+      GROUP BY 1
+      ORDER BY count(*) DESC
+      LIMIT 1`,
   ]);
 
   const totals = {
@@ -208,6 +226,19 @@ export async function getTestReport(testKey: string): Promise<TestReport | null>
     };
   }
 
+  // The first allowed origin is the customer-facing storefront; the rest are
+  // the myshopify fallbacks, which are not where you want to spot-check.
+  const storefront = allowedOrigins()[0] ?? null;
+  const surfacePath = surfaceRows[0]?.path ?? null;
+  let surfaceUrl: string | null = null;
+  if (storefront && surfacePath) {
+    try {
+      surfaceUrl = new URL(surfacePath, storefront).toString();
+    } catch {
+      surfaceUrl = null;
+    }
+  }
+
   return {
     test: {
       key: test.key,
@@ -226,6 +257,7 @@ export async function getTestReport(testKey: string): Promise<TestReport | null>
     windowComplete: daysElapsed !== null && daysElapsed >= test.plannedDays,
     excludedPreStart,
     pacing,
+    surfaceUrl,
   };
 }
 
