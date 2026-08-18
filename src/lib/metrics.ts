@@ -263,7 +263,11 @@ export async function getTestReport(testKey: string): Promise<TestReport | null>
 
 export async function listTests() {
   return db.abTest.findMany({
-    orderBy: [{ startedAt: "desc" }, { createdAt: "desc" }],
+    // nulls last is load-bearing, not tidiness. The dashboard opens on
+    // tests[0], and Postgres sorts NULLs first on DESC — so a test that was
+    // declared but never started outranked the one actually running, and the
+    // dashboard opened on a row with no data in it.
+    orderBy: [{ startedAt: { sort: "desc", nulls: "last" } }, { createdAt: "desc" }],
     select: { key: true, name: true, startedAt: true, stoppedAt: true },
   });
 }
