@@ -13,6 +13,13 @@ export function proxy(req: NextRequest) {
   // looking healthy.
   if (pathname.startsWith("/api/ab/")) return NextResponse.next();
 
+  // The quiz unlock is public for the same reason: the storefront reads it on
+  // every PDP render and writes it when a shopper finishes the quiz, with no
+  // session to present. It guards itself with the same origin allowlist, and
+  // the GET returns nothing but a boolean and a number for an id you must
+  // already know.
+  if (pathname.startsWith("/api/quiz/")) return NextResponse.next();
+
   // Order sync authenticates with CRON_SECRET, not the dashboard cookie.
   if (pathname.startsWith("/api/sync/")) return NextResponse.next();
 

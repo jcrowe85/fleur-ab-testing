@@ -19,15 +19,15 @@ datasource db {
 /// and so the stopping rule is recorded *before* any data arrives — deciding it
 /// afterwards is how peeking creeps in.
 model AbTest {
-  key            String    @id /// e.g. "pdp_redesign_2607" — matches the theme cookie
-  name           String
-  hypothesis     String?
-  primaryMetric  String    @default("add_to_cart") /// the metric the run length was powered for
-  plannedDays    Int       @default(21)
-  startedAt      DateTime?
-  endsAt         DateTime?
-  stoppedAt      DateTime?
-  createdAt      DateTime  @default(now())
+  key           String    @id /// e.g. "pdp_redesign_2607" — matches the theme cookie
+  name          String
+  hypothesis    String?
+  primaryMetric String    @default("add_to_cart") /// the metric the run length was powered for
+  plannedDays   Int       @default(21)
+  startedAt     DateTime?
+  endsAt        DateTime?
+  stoppedAt     DateTime?
+  createdAt     DateTime  @default(now())
 
   events AbEvent[]
   orders AbOrder[]
@@ -76,4 +76,33 @@ model AbOrder {
   abTest AbTest @relation(fields: [test], references: [key], onDelete: Cascade)
 
   @@index([test, bucket, placedAt])
+}
+
+/// A completed discount quiz, recorded server-side.
+///
+/// The PDP asks this before it shows or charges a discounted price. The cookie
+/// the quiz drops is a hint for fast rendering, not the authority: it is
+/// settable from the console in seconds, and once the unlock decides which
+/// selling plan the form submits, a cookie alone would be the only thing
+/// between a shopper and $108 off a 6-month plan.
+///
+/// Keyed on the anonymous visitor id already used for the funnel, so this adds
+/// no new identifier and stays consistent with how rates are counted. Cross
+/// device is a known gap — a shopper who takes the quiz on a phone and buys on
+/// a laptop is a new visitor id and has to retake it.
+model QuizUnlock {
+  visitorId String   @id
+  /// The ladder earned: 17, 24 or 31. Stored so the PDP grants exactly what
+  /// was won rather than assuming the ceiling.
+  target    Int
+  /// The SMS bonus, if the number was given. Separate because it is a one-time
+  /// code on the first order, not part of the recurring selling plan.
+  bonus     Int      @default(0)
+  email     String?
+  createdAt DateTime @default(now())
+  /// Matches the cookie's life. An unlock that never expires is a permanent
+  /// price change for that visitor.
+  expiresAt DateTime
+
+  @@index([expiresAt])
 }

@@ -1,0 +1,152 @@
+/**
+ * Quiz unlock — record a completion, and answer whether one exists.
+ *
+ * POST records that a visitor finished the quiz. GET is what the PDP asks
+ * before it shows or charges a discounted price.
+ *
+ * Why this exists at all: the quiz also drops a cookie, and for display alone a
+ * cookie was enough — every shopper submitted the same selling plan, so a
+ * hand-set cookie bought nothing. Once the unlock decides *which selling plan
+ * the form submits*, that cookie becomes the only thing between anyone and
+ * $108 off a 6-month plan, and it is settable from the console. So the cookie
+ * is now a hint for fast rendering and this is the authority.
+ *
+ * What this does and does not buy, stated plainly: it means a discount has to
+ * be earned by actually completing the quiz rather than by typing one line into
+ * devtools. It does not make the price tamper-proof — the cart add happens in
+ * the browser, so a determined person can still post a discounted selling plan
+ * directly. Closing that needs validation at checkout (a Shopify Function),
+ * which is a separate piece of work.
+ *
+ * Public, like the event ingest: shoppers' browsers call it, so it holds no
+ * secret and assumes hostile input.
+ */
+
+import { db } from "@/lib/db";
+import { isAllowedOrigin } from "@/lib/ab";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+const MAX_BODY_BYTES = 1024;
+const UNLOCK_DAYS = 90;
+
+/** The ladders the quiz can actually award. Anything else is not a real run. */
+const TARGETS = [17, 24, 31] as const;
+
+function corsHeaders(origin: string | null): Record<string, string> {
+  if (!isAllowedOrigin(origin)) return {};
+  return {
+    "Access-Control-Allow-Origin": origin as string,
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Max-Age": "86400",
+    Vary: "Origin",
+  };
+}
+
+export async function OPTIONS(req: Request) {
+  const origin = req.headers.get("origin");
+  return new Response(null, { status: 204, headers: corsHeaders(origin) });
+}
+
+function clampId(v: unknown): string | null {
+  if (typeof v !== "string") return null;
+  const s = v.trim();
+  // Same shape as the id ab-assign.liquid generates; anything else is junk.
+  if (!/^[a-z0-9]{8,64}$/i.test(s)) return null;
+  return s;
+}
+
+export async function POST(req: Request) {
+  const origin = req.headers.get("origin");
+
+  // Enforced server-side. CORS does not protect this: a simple request still
+  // lands, the browser only withholds the response from the caller.
+  if (!isAllowedOrigin(origin)) {
+    return new Response(null, {
+      status: 403,
+      headers: { "X-Quiz-Unlock": "origin-rejected" },
+    });
+  }
+
+  const raw = await req.text();
+  if (raw.length > MAX_BODY_BYTES) {
+    return new Response(null, {
+      status: 413,
+      headers: { ...corsHeaders(origin), "X-Quiz-Unlock": "too-large" },
+    });
+  }
+
+  let body: Record<string, unknown>;
+  try {
+    body = JSON.parse(raw) as Record<string, unknown>;
+  } catch {
+    return new Response(null, {
+      status: 400,
+      headers: { ...corsHeaders(origin), "X-Quiz-Unlock": "bad-json" },
+    });
+  }
+
+  const visitorId = clampId(body.visitorId);
+  const target = Number(body.target);
+  if (!visitorId || !TARGETS.includes(target as (typeof TARGETS)[number])) {
+    return new Response(null, {
+      status: 400,
+      headers: { ...corsHeaders(origin), "X-Quiz-Unlock": "bad-input" },
+    });
+  }
+
+  // Trusted only as a label on the record, never as an award: the bonus is a
+  // one-time code applied at checkout by Shopify, not something this grants.
+  const bonus = Number(body.bonus) > 0 ? Math.min(20, Math.round(Number(body.bonus))) : 0;
+  const email =
+    typeof body.email === "string" && body.email.length <= 320 ? body.email : null;
+
+  const expiresAt = new Date(Date.now() + UNLOCK_DAYS * 864e5);
+
+  // Upsert, not create: retaking the quiz refreshes the window and can only
+  // move the target, which keeps a second run from being a silent no-op.
+  await db.quizUnlock.upsert({
+    where: { visitorId },
+    create: { visitorId, target, bonus, email, expiresAt },
+    update: { target, bonus, email, expiresAt },
+  });
+
+  return new Response(JSON.stringify({ ok: true, target, bonus }), {
+    status: 200,
+    headers: {
+      ...corsHeaders(origin),
+      "Content-Type": "application/json",
+      "X-Quiz-Unlock": "recorded",
+    },
+  });
+}
+
+export async function GET(req: Request) {
+  const origin = req.headers.get("origin");
+  const url = new URL(req.url);
+  const visitorId = clampId(url.searchParams.get("vid"));
+
+  // Never cached, by anything. A shared cache holding one shopper's unlock
+  // would hand every later reader a discount they did not earn.
+  const headers = {
+    ...corsHeaders(origin),
+    "Content-Type": "application/json",
+    "Cache-Control": "no-store, private",
+  };
+
+  if (!visitorId) {
+    return new Response(JSON.stringify({ unlocked: false }), { status: 200, headers });
+  }
+
+  const row = await db.quizUnlock.findUnique({ where: { visitorId } });
+  const live = row && row.expiresAt.getTime() > Date.now();
+
+  return new Response(
+    JSON.stringify(
+      live ? { unlocked: true, target: row.target, bonus: row.bonus } : { unlocked: false }
+    ),
+    { status: 200, headers }
+  );
+}
