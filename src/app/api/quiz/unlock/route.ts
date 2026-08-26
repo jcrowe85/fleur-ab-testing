@@ -24,6 +24,7 @@
 
 import { db } from "@/lib/db";
 import { isAllowedOrigin } from "@/lib/ab";
+import { subscribeQuizCompleter } from "@/lib/klaviyo";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -102,6 +103,8 @@ export async function POST(req: Request) {
   const bonus = Number(body.bonus) > 0 ? Math.min(20, Math.round(Number(body.bonus))) : 0;
   const email =
     typeof body.email === "string" && body.email.length <= 320 ? body.email : null;
+  const phone =
+    typeof body.phone === "string" && body.phone.length <= 32 ? body.phone : null;
 
   const expiresAt = new Date(Date.now() + UNLOCK_DAYS * 864e5);
 
@@ -113,7 +116,23 @@ export async function POST(req: Request) {
     update: { target, bonus, email, expiresAt },
   });
 
-  return new Response(JSON.stringify({ ok: true, target, bonus }), {
+  /* Consent, written where Klaviyo will honour it.
+     The browser's identify call sets the profile's attributes but cannot set
+     consent, which is why every quiz profile read back with "sms consent: NONE"
+     — a number collected against a promise to text it that nothing was allowed
+     to text.
+
+     Awaited so a failure is visible in the response rather than lost, but never
+     fatal: the unlock is what the shopper is waiting on, and a Klaviyo outage
+     must not cost them the discount they just earned. */
+  let subscribed;
+  try {
+    subscribed = await subscribeQuizCompleter({ email, phone });
+  } catch (e) {
+    subscribed = { email: "failed", sms: "failed", detail: (e as Error).message };
+  }
+
+  return new Response(JSON.stringify({ ok: true, target, bonus, subscribed }), {
     status: 200,
     headers: {
       ...corsHeaders(origin),
