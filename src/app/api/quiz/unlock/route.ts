@@ -136,18 +136,44 @@ export async function POST(req: Request) {
 
   if (answers && Object.keys(answers).length > 0) {
     try {
-      await db.quizResponse.create({
-        /* Cast for Prisma's Json input type, which does not accept a bare
-           Record. The shape is validated above: an object, not an array. */
-        data: {
-          visitorId,
-          email,
-          target,
-          bonus,
-          persona,
-          answers: answers as Prisma.InputJsonValue,
-        },
+      /* One row per completion, not per post.
+         The quiz posts twice — once when the email is given, once when the
+         phone is, to attach the bonus — so a naive insert filed two rows for
+         every run that included the SMS step: a partial one at bonus 0 and the
+         real one at bonus 5. That inflates any count of completions by the
+         opt-in rate, and silently, because both rows look valid.
+
+         So a post that lands close behind another from the same visitor
+         updates it rather than adding to it. The later post is the fuller
+         picture — it carries the bonus and any answers given since — so it
+         wins outright.
+
+         The window is what separates "still finishing" from "came back and did
+         it again". Two hours is long enough for anyone working through it
+         slowly, and short enough that a genuine retake later is what it should
+         be: a second row, a second data point. */
+      const CONTINUATION_MS = 2 * 60 * 60 * 1000;
+      const recent = await db.quizResponse.findFirst({
+        where: { visitorId, createdAt: { gte: new Date(Date.now() - CONTINUATION_MS) } },
+        orderBy: { createdAt: "desc" },
+        select: { id: true },
       });
+
+      /* Cast for Prisma's Json input type, which does not accept a bare
+         Record. The shape is validated above: an object, not an array. */
+      const payload = {
+        email,
+        target,
+        bonus,
+        persona,
+        answers: answers as Prisma.InputJsonValue,
+      };
+
+      if (recent) {
+        await db.quizResponse.update({ where: { id: recent.id }, data: payload });
+      } else {
+        await db.quizResponse.create({ data: { visitorId, ...payload } });
+      }
     } catch {
       /* Analysis data must never cost the shopper their unlock. */
     }
