@@ -22,6 +22,7 @@
  * secret and assumes hostile input.
  */
 
+import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { isAllowedOrigin } from "@/lib/ab";
 import { subscribeQuizCompleter } from "@/lib/klaviyo";
@@ -29,7 +30,10 @@ import { subscribeQuizCompleter } from "@/lib/klaviyo";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const MAX_BODY_BYTES = 1024;
+/* The answer set rides along now, so the old 1KB ceiling is too tight — a full
+   run is ~13 keys with multi-select values. Still bounded: this endpoint is
+   public and must assume hostile input. */
+const MAX_BODY_BYTES = 8192;
 const UNLOCK_DAYS = 90;
 
 /** The ladders the quiz can actually award. Anything else is not a real run. */
@@ -115,6 +119,39 @@ export async function POST(req: Request) {
     create: { visitorId, target, bonus, email, expiresAt },
     update: { target, bonus, email, expiresAt },
   });
+
+  /* The answers, kept as a row per completion rather than upserted.
+     The unlock above is state — what this visitor is currently owed — so it is
+     overwritten. This is a record of what they said and when, and a retake is a
+     second data point rather than a correction to the first.
+
+     Written only when there are answers to write: the phone step re-posts to
+     attach the bonus and would otherwise file an empty second response. */
+  const answers =
+    body.answers && typeof body.answers === "object" && !Array.isArray(body.answers)
+      ? (body.answers as Record<string, unknown>)
+      : null;
+  const persona =
+    typeof body.persona === "string" && body.persona.length <= 64 ? body.persona : null;
+
+  if (answers && Object.keys(answers).length > 0) {
+    try {
+      await db.quizResponse.create({
+        /* Cast for Prisma's Json input type, which does not accept a bare
+           Record. The shape is validated above: an object, not an array. */
+        data: {
+          visitorId,
+          email,
+          target,
+          bonus,
+          persona,
+          answers: answers as Prisma.InputJsonValue,
+        },
+      });
+    } catch {
+      /* Analysis data must never cost the shopper their unlock. */
+    }
+  }
 
   /* Consent, written where Klaviyo will honour it.
      The browser's identify call sets the profile's attributes but cannot set

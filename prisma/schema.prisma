@@ -106,3 +106,39 @@ model QuizUnlock {
 
   @@index([expiresAt])
 }
+
+/// One row per completed quiz, kept for analysis rather than for the storefront.
+///
+/// The answers already reach Klaviyo as profile properties, which is what makes
+/// them usable for segments and audience exports. What that cannot do is
+/// aggregate: Klaviyo holds the latest state of a person, overwritten on every
+/// retake, and has no way to ask "what share of takers report shedding" or
+/// "which answers precede a purchase". This is a row per completion, in the
+/// same database as the funnel events and the orders, so those questions are a
+/// join rather than an export.
+///
+/// Keyed on the anonymous visitor id the funnel already uses, so a completion
+/// can be lined up with that visitor's exposures and their order without
+/// introducing another identifier.
+///
+/// Note what this is: hair-loss, postpartum and menopause answers next to an
+/// email address. It is the same data Klaviyo already holds, but it is worth
+/// being deliberate that it now sits here too.
+model QuizResponse {
+  id        String   @id @default(cuid())
+  visitorId String
+  email     String?
+  /// The ladder they entered on: 17, 24 or 31.
+  target    Int
+  bonus     Int      @default(0)
+  /// The derived segment the quiz itself computed, stored beside the raw
+  /// answers so a change to the scoring rules does not rewrite history.
+  persona   String?
+  /// The full answer set, as the quiz recorded it.
+  answers   Json
+  createdAt DateTime @default(now())
+
+  @@index([visitorId])
+  @@index([createdAt])
+  @@index([persona])
+}
