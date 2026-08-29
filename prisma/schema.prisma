@@ -142,3 +142,47 @@ model QuizResponse {
   @@index([createdAt])
   @@index([persona])
 }
+
+/// Where people leave the quiz.
+///
+/// QuizResponse is a row per *completion*, so every question the data can
+/// answer is conditioned on survival. If one group abandons more than another,
+/// its share of completions is understated and its conversion rate is measured
+/// on whichever subset tolerated the questionnaire — and nothing in the schema
+/// could tell you that was happening. Persona shares were being read as
+/// audience composition when they were composition-after-attrition.
+///
+/// One row per attempt, updated in place as the shopper advances, so an
+/// abandoned run leaves the step they stopped on and the answers they had given
+/// by then. That second part is what makes it useful rather than merely a
+/// funnel count: `lifestage` is the fourth question, so anyone who gets past it
+/// has already declared menopause, postpartum or stress before they quit.
+///
+/// Deliberately separate from QuizResponse rather than a nullable completion on
+/// one table: a completion is a fact about a shopper and is kept, while these
+/// are observations about a session and can be pruned without losing anything.
+model QuizProgress {
+  id String @id @default(cuid())
+  /// The same anonymous id the funnel and the unlock use, so drop-off joins to
+  /// exposures and orders without a new identifier.
+  visitorId String
+  /// One run of the quiz. A retake is a second funnel, not an overwrite of the
+  /// first — otherwise abandoning and then succeeding would erase the abandon.
+  attempt String
+  /// The step id they are on now, e.g. 'concern', 'email', 'results'.
+  step String
+  /// Position of that step, and the furthest they ever reached. The two differ
+  /// when someone goes back, and only the second describes how far they got.
+  stepIndex Int @default(0)
+  furthest  Int @default(0)
+  /// Answers as they stood at the last beacon. The point of the table.
+  answers   Json?
+  completed Boolean @default(false)
+  startedAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([visitorId, attempt])
+  @@index([startedAt])
+  @@index([step])
+  @@index([completed])
+}
