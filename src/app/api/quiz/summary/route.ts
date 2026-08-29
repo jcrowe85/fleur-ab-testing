@@ -35,10 +35,17 @@ import { generateSummary, summarySignature, SUMMARY_MODEL } from "@/lib/summary"
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-/* Above the model timeout in lib/summary.ts, so a slow generation is ended by
-   its own deadline — which returns a usable "no summary" — rather than by the
-   platform killing the function mid-flight. */
-export const maxDuration = 15;
+/* The route cannot wait as long as the batch does — the shopper is gone long
+   before either. It is raised anyway, to the platform maximum, because a cold
+   request is not serving the person who made it: its whole value is finishing
+   and writing the row for whoever is next, and a function killed at 15s throws
+   away work that was nearly done.
+
+   Note this is below the 90s model timeout in lib/summary.ts on purpose. In the
+   batch the model deadline governs; here the platform stops it first, which is
+   the right order — the ceiling that fires is the one belonging to whichever
+   context is running. */
+export const maxDuration = 60;
 
 const MAX_BODY_BYTES = 8192;
 

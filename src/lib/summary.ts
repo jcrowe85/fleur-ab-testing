@@ -78,7 +78,13 @@ const EFFORT = "high";
  *  a 8s timeout into a 26s failure — three attempts, each abandoned just before
  *  it would have succeeded — which is exactly what happened on two of the nine
  *  cells generated during the build. */
-const GENERATION_TIMEOUT_MS = 30000;
+/* 30s was set when effort was low. At high effort with room to think, a slow
+   cell runs past it — five of forty-four timed out at ~60s, which is this
+   ceiling times the one retry, and each of those quietly kept its previous
+   copy. Since every generation that matters happens in the offline batch, the
+   ceiling should be the point where something is genuinely wrong rather than
+   merely slow. */
+const GENERATION_TIMEOUT_MS = 90000;
 const MAX_RETRIES = 1;
 
 export type Signals = {
@@ -225,28 +231,27 @@ This screen is already text-heavy and sits directly above the price. Every budge
   Point 2: what is specific to her — scalp, processing, tension, how long it has run.
   Point 3: what a daily scalp routine is actually for here.
 
-"bridge" — 40-50 words. This is the most important field and the one most likely to come back generic. Read the rule below twice.
+"bridge" — 55-70 words. This is the most important field and the one most likely to come back generic. Read the rule below twice.
 
-═══ THE BRIDGE MUST BE MECHANISM-MATCHED ═══
+It appears on the page under the heading "The solution with Bloom", so she already knows a product is coming. Do not spend words announcing it. What she does not know is why THIS product answers HER problem, and that is the only thing this field is for.
 
-Point 1 named the specific thing that has gone wrong in her hair cycle. The bridge has to name what Bloom does about THAT SPECIFIC THING. Not what Bloom does in general.
+═══ THREE BEATS, IN ORDER, ALL THREE REQUIRED ═══
 
-The test: could this bridge be pasted onto a different woman with a different cause and still make sense? If yes, it is wrong. Rewrite it until it only fits her.
+BEAT 1 — her broken step. What specifically has gone wrong or been lost in HER cause. It must NOT contain "Bloom", "peptide", "serum", "copper", "GHK" or any claim; it is about her body. It must be impossible to reuse under a different cause — name the actual thing: the oestrogen that fell, the follicles that went to rest together, the inherited cycle that shortens each round, the pregnancy hormones that dropped.
 
-  BAD — true of everyone, tells her nothing:
-    "Bloom's copper peptides work at the follicle-signalling level rather than the strand. If past products disappointed, most sat on the hair."
-    "Bloom is a scalp serum, not a styling product. Its copper peptides are clinically studied to support follicle signalling and scalp repair."
+BEAT 2 — Bloom, acting on that exact step. Connect an approved claim to the step named in beat 1, and carry a joining phrase — "that same", "exactly that", "the step your body stopped". Without one you have written two unrelated sentences and it does not count.
 
-  GOOD — names her mechanism, then the answer to it:
-    menopause — "Oestrogen was the thing keeping that signal strong, and it is not coming back. Copper peptides act on the same follicle signalling from the outside: GHK-Cu is studied for exactly that step, which is the one your body stopped supporting."
-    telogen   — "Those follicles are resting, not gone, and what they cycle back into decides how they come back. Copper peptides are studied for supporting the scalp they have to recover in, so the environment is ready when they restart."
-    hereditary — "Miniaturisation happens over cycles, which is why starting early matters more than trying harder. Copper peptides are studied for follicle signalling, the step that weakens a little with each round."
+BEAT 3 — what that means for her, and this is the beat that was missing. Beats 1 and 2 explain; beat 3 is why she would act. Not a promise, not a timeline, not "results". It is the consequence of the mechanism being addressed at all — that the signal has somewhere to come from now, that the follicles have a scalp worth restarting into, that this is the layer everything she has already tried was not touching. End on her, not on the ingredient.
 
-Notice the shape: name the broken step in her own cause, then say Bloom acts on that same step. The claims are unchanged — you are choosing WHICH approved claim to lead with based on her mechanism, not inventing a new one.
+  BAD — stops after beat 2, so it explains and never turns:
+    "Oestrogen was holding that growth signal, and it isn't returning. Copper peptides like GHK-Cu are studied for supporting that same follicle signalling from outside."
 
-If her signals suggest doubt (moderate or minimal commitment, "tried lots"), answer it in a clause, not a sentence — and answer it with the mechanism above, never with enthusiasm.
+  GOOD — the same two beats, then the turn:
+    "Oestrogen was holding that growth signal steady, and it isn't coming back on its own. Copper peptides act on that same signalling from the outside — GHK-Cu is studied for exactly that step. Which means the shampoos and thickening sprays were never wrong so much as aimed at the wrong layer: they treated the hair you have, not the signal deciding what grows next."
 
-For medical signals, the bridge is the honest hand-off instead: the cause comes first with her doctor, and the routine works alongside it.`;
+MEDICAL SIGNALS: if her answers mention a medication or condition, give it ONE clause — the cause comes first and is worth raising with her doctor — and then get on with the three beats. It is a caveat, not the subject. Only when her whole picture is medical does the hand-off become the point, and then the three beats are replaced by it.
+
+`;
 
 /* ── Generation ───────────────────────────────────────────────────────────── */
 
@@ -286,7 +291,14 @@ export async function generateSummary(signals: Signals): Promise<Summary | null>
     const response = await client.messages.create(
       {
         model: MODEL,
-        max_tokens: 2000,
+        /* Thinking tokens are billed against max_tokens, so this is not
+           "how long is the copy" — it is thinking plus copy. At effort high the
+           reasoning alone can run past 2000, which truncated the JSON mid-string
+           and surfaced as an unterminated-string parse error rather than
+           anything that named a token limit. Generous, because this runs as an
+           offline batch where a larger ceiling costs nothing unless it is
+           used. */
+        max_tokens: 8000,
         output_config: {
           effort: EFFORT,
           format: {
@@ -334,6 +346,14 @@ export async function generateSummary(signals: Signals): Promise<Summary | null>
        before the blocks are read rather than after something has already
        thrown on an empty array. */
     if (response.stop_reason === "refusal") return null;
+
+    /* Truncation is worth naming rather than letting JSON.parse fail on a
+       half-written string — the parse error says nothing about the cause and
+       sent me looking in the wrong place once already. */
+    if (response.stop_reason === "max_tokens") {
+      console.error("[quiz/summary] hit max_tokens; raise it or shorten the output spec");
+      return null;
+    }
 
     const text = response.content
       .filter((b): b is Anthropic.TextBlock => b.type === "text")
