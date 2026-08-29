@@ -142,3 +142,44 @@ model QuizResponse {
   @@index([createdAt])
   @@index([persona])
 }
+
+/// A generated results-screen summary, cached by the shape of the answers.
+///
+/// The summary is written by an LLM on the way to the results screen, which is
+/// the one place in this funnel where latency is expensive: the shopper has
+/// finished thirteen questions and is waiting on the discount. The analysing
+/// screen buys 2.9 seconds of cover and no more, so a cold generation is a
+/// coin flip against that clock.
+///
+/// Hence a cache — but not on the raw answer set. Ten multi-select questions
+/// make almost every completion unique, so a raw key would never hit and the
+/// table would just be a log. The key is a deliberately *coarse* signature
+/// (see summarySignature): the handful of signals the copy actually turns on.
+/// Everything else varies the wording without changing the argument, so
+/// collapsing it is what makes the cache work at this volume.
+///
+/// It also buys back something the LLM otherwise costs us: with a stable key,
+/// two shoppers with the same signature see the same words, so a results screen
+/// is a testable variant again rather than a per-visitor one-off.
+model QuizSummary {
+  /// Hash of the coarsened signature — persona, lead concern, damage, phase,
+  /// commitment. Not the raw answers.
+  signature String   @id
+  /// The paraphrase shown above the offer, ellipsis and all.
+  teaser    String
+  /// The expansion behind "read full analysis". Named `analysis` rather
+  /// than `full` because `full` is a reserved word in Postgres — Prisma quotes
+  /// it, but every hand-written query against this table would have to too.
+  analysis  String
+  /// Which model wrote it, so a model change can be found and invalidated
+  /// rather than silently mixed in with the old copy.
+  model     String
+  persona   String?
+  /// How many completions have been served this row. Cheap read on whether the
+  /// coarsening is actually collapsing anything.
+  hits      Int      @default(0)
+  createdAt DateTime @default(now())
+
+  @@index([persona])
+  @@index([createdAt])
+}
