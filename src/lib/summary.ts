@@ -53,7 +53,14 @@ import { createHash } from "node:crypto";
    is 8-26s and loses to the analysing screen regardless. It is the right
    setting for the work, not a latency strategy. */
 const MODEL = "claude-opus-5";
-const EFFORT = "low";
+/* Raised from "low", which was set when a generation was imagined to be racing
+   the 2.9s analysing screen. It never was — everything a shopper sees comes
+   from a row warmed offline by scripts/warm-summaries.mjs, where a few extra
+   seconds across 43 calls costs nothing. And the bridge is no longer a
+   formatting task: it has to identify the specific broken step in this
+   shopper's cause and attach the right claim to that step, which at low effort
+   came back as the same interchangeable recitation of the claim every time. */
+const EFFORT = "high";
 
 /** Generous on purpose, and this was wrong the first time round.
  *
@@ -218,7 +225,28 @@ This screen is already text-heavy and sits directly above the price. Every budge
   Point 2: what is specific to her — scalp, processing, tension, how long it has run.
   Point 3: what a daily scalp routine is actually for here.
 
-"bridge" — 28-35 words, never more than 35. The serum, named, connected to HER situation, inside the approved claims. If her signals suggest doubt, answer the doubt in a clause, not a sentence. Understated; she is already looking at the offer.`;
+"bridge" — 40-50 words. This is the most important field and the one most likely to come back generic. Read the rule below twice.
+
+═══ THE BRIDGE MUST BE MECHANISM-MATCHED ═══
+
+Point 1 named the specific thing that has gone wrong in her hair cycle. The bridge has to name what Bloom does about THAT SPECIFIC THING. Not what Bloom does in general.
+
+The test: could this bridge be pasted onto a different woman with a different cause and still make sense? If yes, it is wrong. Rewrite it until it only fits her.
+
+  BAD — true of everyone, tells her nothing:
+    "Bloom's copper peptides work at the follicle-signalling level rather than the strand. If past products disappointed, most sat on the hair."
+    "Bloom is a scalp serum, not a styling product. Its copper peptides are clinically studied to support follicle signalling and scalp repair."
+
+  GOOD — names her mechanism, then the answer to it:
+    menopause — "Oestrogen was the thing keeping that signal strong, and it is not coming back. Copper peptides act on the same follicle signalling from the outside: GHK-Cu is studied for exactly that step, which is the one your body stopped supporting."
+    telogen   — "Those follicles are resting, not gone, and what they cycle back into decides how they come back. Copper peptides are studied for supporting the scalp they have to recover in, so the environment is ready when they restart."
+    hereditary — "Miniaturisation happens over cycles, which is why starting early matters more than trying harder. Copper peptides are studied for follicle signalling, the step that weakens a little with each round."
+
+Notice the shape: name the broken step in her own cause, then say Bloom acts on that same step. The claims are unchanged — you are choosing WHICH approved claim to lead with based on her mechanism, not inventing a new one.
+
+If her signals suggest doubt (moderate or minimal commitment, "tried lots"), answer it in a clause, not a sentence — and answer it with the mechanism above, never with enthusiasm.
+
+For medical signals, the bridge is the honest hand-off instead: the cause comes first with her doctor, and the routine works alongside it.`;
 
 /* ── Generation ───────────────────────────────────────────────────────────── */
 
