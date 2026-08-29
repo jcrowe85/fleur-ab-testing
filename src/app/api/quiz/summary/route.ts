@@ -122,7 +122,7 @@ export async function POST(req: Request) {
     const hit = await db.quizSummary.update({
       where: { signature },
       data: { hits: { increment: 1 } },
-      select: { teaser: true, analysis: true },
+      select: { teaser: true, lead: true, points: true, bridge: true },
     });
     return new Response(JSON.stringify({ summary: hit }), {
       status: 200,
@@ -150,7 +150,9 @@ export async function POST(req: Request) {
       create: {
         signature,
         teaser: summary.teaser,
-        analysis: summary.analysis,
+        lead: summary.lead,
+        points: summary.points,
+        bridge: summary.bridge,
         model: SUMMARY_MODEL,
         persona,
         hits: 1,

@@ -80,7 +80,22 @@ export type Signals = {
   answers: Record<string, unknown>;
 };
 
-export type Summary = { teaser: string; analysis: string };
+/** The icons the theme owns. The model chooses from this list; it never draws
+ *  one. Generated SVG would be unreviewed markup injected into the page — it
+ *  can break the layout and it is an injection surface on copy that already
+ *  ships without a human reading it. */
+export const ICONS = [
+  "hormone", "scalp", "strand", "follicle", "routine", "clock", "doctor", "colour",
+] as const;
+export type Icon = (typeof ICONS)[number];
+
+export type Point = { icon: Icon; heading: string; body: string };
+export type Summary = {
+  teaser: string;
+  lead: string;
+  points: Point[];
+  bridge: string;
+};
 
 /* ── The signature ────────────────────────────────────────────────────────── */
 
@@ -138,36 +153,72 @@ export function summarySignature(signals: Signals): string {
  * model that nobody reviews before a shopper reads it. Each rule below closes
  * something that would otherwise be shipped at scale and unreviewed.
  */
-const SYSTEM = `You write the short summary that appears at the top of the results screen of a hair-loss quiz for Fleur, a hair and scalp serum brand. The shopper has just answered around a dozen questions and is about to be shown a discounted subscription offer with a schedule of free gifts.
+const SYSTEM = `You write the summary shown at the top of the results screen of Fleur's hair quiz, directly above a discounted subscription offer for Fleur's Bloom Hair & Scalp Serum. The reader is a woman who has just answered about a dozen questions on her hair.
 
-Your job is to make the questions land — to show her that her answers were read — and then to hand off to the offer below.
+═══ VOICE — this is the part that usually goes wrong ═══
 
-VOICE
-- Second person, direct, calm. Plain English.
-- No exclamation marks. No hype, no "amazing", no "journey", no "we're so glad you're here".
+Do NOT open by reciting her answers back as a list of attributes. That reads like a database record and it is the single most common failure here.
+
+  Bad:  "Coarse, colour-treated hair breaking mid-strand through menopause, with an oily scalp and a prescription in the mix..."
+  Good: "For women going through menopause who also colour their hair, this usually shows up in two places at once..."
+
+Write to her as one of a group she would recognise herself in — "women in perimenopause who colour", "if you have been noticing more in the drain than usual". Recognition, not readout. She should feel described, not processed.
+
+Other voice rules:
+- Warm, calm, direct. Plain English. Second person.
+- No exclamation marks. No "amazing", "journey", "gorgeous", "queen", "bestie".
 - Never open with "Based on your answers" or "It sounds like".
-- British or American spelling both fine; stay consistent within a response.
+- Contractions are fine. Sound like a knowledgeable person talking, not a leaflet.
 
-WHAT YOU MUST NOT DO
-- Never diagnose. You may describe what a pattern commonly is; never assert what this person has. "This pattern is usually..." not "You have...".
-- Never make a medical claim, promise regrowth, or give a timeline for results.
-- Never state a price, a percentage, a discount, or a number of months. The offer panel below owns every figure on this page, and a figure you invent is one the checkout would disprove.
-- Never name a specific medication, dose, or condition as applying to this person.
-- Never claim the serum treats, cures or reverses anything. It supports the scalp; that is the whole claim.
-- Do not contradict what she told you, and do not tell her the cause is something she did not mention.
+═══ THE JOB ═══
 
-MEDICAL ANSWERS
-If the signals indicate a medical driver (thyroid, PCOS, medication), say plainly that the underlying cause is the first thing to address and that it is worth raising with her doctor. Position the routine as working alongside that, never instead of it. Do not push the offer hard in this case — an honest hand-off is worth more than a sale that will not stick.
+Three things, in order:
+1. Show her the answers were actually read — through recognition, per the voice rules.
+2. Explain what is going on, in mechanism terms she can follow.
+3. Bridge to the serum, and give her a reason to believe it applies to HER situation specifically.
 
-OUTPUT
-Two fields.
+Point 3 is the one that is usually missing and it matters most. Many readers — especially women in menopause — are not unconvinced about the price. They are unconvinced anything works at all, often after trying several things that did not. Do not ignore that. Name the doubt where the signals suggest it (moderate or minimal commitment, "tried lots"), then answer it with mechanism rather than enthusiasm.
 
-"teaser": one or two sentences, 25-35 words. Never more than 35. It names what her answers point to and starts to explain why. It MUST end mid-thought with an ellipsis character (…) because it is followed by a "read full analysis" link. Do not end it with a complete stop.
+═══ WHAT THE PRODUCT IS, AND THE ONLY CLAIMS YOU MAY MAKE ═══
 
-"analysis": three short paragraphs separated by a single blank line. 120 words total, and never more than 130 — count them before you answer; overrunning this is the most common way this output goes wrong.
-  1. What the pattern she described usually is, and the mechanism behind it.
-  2. Anything specific in her answers that changes the picture — scalp condition, processing, tension, how long it has been going on.
-  3. The hand-off: what a daily scalp routine is for here, and a single clause pointing at the serum and the gifts that come with it. Understated. She is already looking at the offer; you are giving her a reason to read it, not closing her.`;
+Bloom is a topical scalp serum built on copper peptides (GHK-Cu, AHK-Cu, Tripeptide-1, Acetyl Tetrapeptide-3, PTD-DBM).
+
+You may say, in your own words, that its ingredients are clinically studied to:
+- improve follicle signalling for stronger, denser-LOOKING hair
+- support scalp repair and long-term follicle health
+- reactivate biological pathways associated with healthy hair growth
+
+Keep the hedges. "Denser-looking", "support", "help maintain", "associated with". These are the company's approved claims and you may not upgrade them.
+
+FORBIDDEN, without exception:
+- Do not promise regrowth, reversal, a cure, or a result.
+- Do not give a timeline ("in 90 days", "within weeks").
+- Do not diagnose. "This pattern is usually..." never "You have...".
+- Do not state a price, a percentage, a discount, or a number of months. The offer panel owns every figure on the page.
+- Do not claim it treats a medical condition.
+- Do not invent an ingredient, a study, or a statistic.
+- Do not describe the product's texture, weight, scent, colour, feel, or how it is applied. You have not been told any of those and every one you have reached for has been wrong. "Lightweight", "non-greasy", "absorbs fast", "a few drops" — all forbidden. Talk about what it does, never what it is like.
+- Do not mention free gifts, bundles, or anything that ships with the order. They are not on this screen.
+
+MEDICAL SIGNALS (medication, thyroid, PCOS): say plainly the underlying cause is the first thing to address and worth raising with her doctor. Position the routine as working alongside that, never instead of it. Do not push the offer in this case.
+
+═══ OUTPUT ═══
+
+This screen is already text-heavy and sits directly above the price. Every budget below is a hard ceiling, and they are set so that hitting each one lands the whole block at 110-130 words. Write short. If a sentence can lose four words, lose them.
+
+"teaser" — 18-24 words, never more than 24. The recognition opener. Ends mid-thought with the … character, because a "read full analysis" link follows it. Never a complete stop.
+
+"lead" — one sentence, max 20 words. What is most likely going on.
+
+"points" — EXACTLY 3. Not 2, not 4. Each is:
+    "icon"    — one of: hormone, scalp, strand, follicle, routine, clock, doctor, colour
+    "heading" — 3-5 words, sentence case, no full stop
+    "body"    — ONE sentence, max 18 words. Two sentences is the most common overrun here; do not write two.
+  Point 1: the mechanism behind her pattern.
+  Point 2: what is specific to her — scalp, processing, tension, how long it has run.
+  Point 3: what a daily scalp routine is actually for here.
+
+"bridge" — 28-35 words, never more than 35. The serum, named, connected to HER situation, inside the approved claims. If her signals suggest doubt, answer the doubt in a clause, not a sentence. Understated; she is already looking at the offer.`;
 
 /* ── Generation ───────────────────────────────────────────────────────────── */
 
@@ -207,7 +258,7 @@ export async function generateSummary(signals: Signals): Promise<Summary | null>
     const response = await client.messages.create(
       {
         model: MODEL,
-        max_tokens: 1200,
+        max_tokens: 2000,
         output_config: {
           effort: EFFORT,
           format: {
@@ -216,9 +267,29 @@ export async function generateSummary(signals: Signals): Promise<Summary | null>
               type: "object",
               properties: {
                 teaser: { type: "string" },
-                analysis: { type: "string" },
+                lead: { type: "string" },
+                /* No minItems/maxItems: structured outputs reject any minItems
+                   other than 0 or 1, and sending 3 fails the whole request with
+                   a 400. So the count cannot be enforced here at all — "exactly
+                   3" in the prompt is a strong hint and the parse below is what
+                   actually holds the line, truncating a fourth point rather
+                   than throwing away an otherwise good response. */
+                points: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      icon: { type: "string", enum: [...ICONS] },
+                      heading: { type: "string" },
+                      body: { type: "string" },
+                    },
+                    required: ["icon", "heading", "body"],
+                    additionalProperties: false,
+                  },
+                },
+                bridge: { type: "string" },
               },
-              required: ["teaser", "analysis"],
+              required: ["teaser", "lead", "points", "bridge"],
               additionalProperties: false,
             },
           },
@@ -243,11 +314,31 @@ export async function generateSummary(signals: Signals): Promise<Summary | null>
     if (!text) return null;
 
     const parsed = JSON.parse(text) as Partial<Summary>;
-    if (typeof parsed.teaser !== "string" || typeof parsed.analysis !== "string") return null;
+    const teaser = typeof parsed.teaser === "string" ? parsed.teaser.trim() : "";
+    const lead = typeof parsed.lead === "string" ? parsed.lead.trim() : "";
+    const bridge = typeof parsed.bridge === "string" ? parsed.bridge.trim() : "";
+    if (!teaser || !lead || !bridge) return null;
 
-    const teaser = parsed.teaser.trim();
-    const analysis = parsed.analysis.trim();
-    if (!teaser || !analysis) return null;
+    /* This is where the count is actually enforced — the schema cannot do it
+       (see above) and the prompt only asks. Four points get truncated to three
+       rather than rejected: the copy is fine, there is just more of it than the
+       screen has room for. Fewer than three is a genuine under-delivery and
+       falls back.
+
+       It is also the boundary between an external service and the storefront,
+       so the shape is validated here rather than assumed — an unrecognised icon
+       drops the point instead of rendering a broken glyph into the page. */
+    const points: Point[] = (Array.isArray(parsed.points) ? parsed.points : [])
+      .filter(
+        (p): p is Point =>
+          !!p &&
+          typeof p.heading === "string" &&
+          typeof p.body === "string" &&
+          (ICONS as readonly string[]).includes(p.icon),
+      )
+      .map((p) => ({ icon: p.icon, heading: p.heading.trim(), body: p.body.trim() }))
+      .slice(0, 3);
+    if (points.length !== 3) return null;
 
     /* The ellipsis is load-bearing: the teaser is rendered directly against a
        "read full analysis" control, and a teaser that closes its own sentence
@@ -255,7 +346,9 @@ export async function generateSummary(signals: Signals): Promise<Summary | null>
        reject — the copy is fine, only the punctuation drifted. */
     return {
       teaser: /[…]$/.test(teaser) ? teaser : teaser.replace(/[.\s]+$/, "") + "…",
-      analysis,
+      lead,
+      points,
+      bridge,
     };
   } catch (e) {
     /* Swallowed for the shopper, never for us.

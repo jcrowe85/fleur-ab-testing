@@ -104,7 +104,9 @@ for (const row of rows) {
     create: {
       signature,
       teaser: summary.teaser,
-      analysis: summary.analysis,
+      lead: summary.lead,
+      points: summary.points,
+      bridge: summary.bridge,
       model: SUMMARY_MODEL,
       persona: row.persona,
       /* Warmed rows start at zero: hits counts shoppers served, and a warm run
@@ -115,12 +117,14 @@ for (const row of rows) {
     },
     update: {
       teaser: summary.teaser,
-      analysis: summary.analysis,
+      lead: summary.lead,
+      points: summary.points,
+      bridge: summary.bridge,
       model: SUMMARY_MODEL,
     },
   });
 
-  const words = summary.analysis.split(/\s+/).length;
+  const words = [summary.lead, ...summary.points.map((p) => p.heading + ' ' + p.body), summary.bridge].join(' ').split(/\s+/).length;
   console.log(`${label} n=${String(row.n).padStart(3)}  ok (${ms}ms, ${words}w)`);
   generated++;
 }

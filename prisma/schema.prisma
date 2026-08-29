@@ -167,10 +167,19 @@ model QuizSummary {
   signature String   @id
   /// The paraphrase shown above the offer, ellipsis and all.
   teaser    String
-  /// The expansion behind "read full analysis". Named `analysis` rather
-  /// than `full` because `full` is a reserved word in Postgres — Prisma quotes
-  /// it, but every hand-written query against this table would have to too.
-  analysis  String
+  /// The expansion behind "read full analysis", stored as its parts rather
+  /// than as prose. It used to be three paragraphs in one column; the screen
+  /// reads as a wall at that length, so it is now a lead line, three icon'd
+  /// points and a closing bridge to the serum. Structured because the theme
+  /// owns the typography and the icons — handing it a blob to split on blank
+  /// lines gave it no way to style any of that.
+  lead      String
+  /// [{ icon, heading, body }] x3. Json because it is a fixed-shape display
+  /// payload rendered as a unit, never queried into.
+  points    Json
+  /// The close: the serum, tied to her situation, answering the doubt. This is
+  /// the part the previous version did not have at all.
+  bridge    String
   /// Which model wrote it, so a model change can be found and invalidated
   /// rather than silently mixed in with the old copy.
   model     String
