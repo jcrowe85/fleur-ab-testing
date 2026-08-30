@@ -135,8 +135,24 @@ export async function POST(req: Request) {
       status: 200,
       headers: { ...headers, "X-Quiz-Summary": "cache-hit" },
     });
-  } catch {
-    /* No row yet. Fall through and write one. */
+  } catch (e) {
+    /* Only "no such row" may fall through to a generation.
+       This was a bare catch, which meant any database hiccup — a cold
+       connection on the first request after a deploy, a pooler blip — was read
+       as a cache miss and answered by spending 8-26 seconds and real money
+       regenerating a row that already existed. Observed doing exactly that on
+       the first requests against a freshly started server.
+       Anything that is not P2025 is a failure to *read* the cache, not evidence
+       the cache is empty, and the honest answer to it is no summary: the theme
+       already falls back gracefully, and a fallback costs nothing. */
+    const code = (e as { code?: string }).code;
+    if (code !== "P2025") {
+      console.error(`[quiz/summary] cache read failed: ${code ?? (e as Error).message}`);
+      return new Response(JSON.stringify({ summary: null }), {
+        status: 200,
+        headers: { ...headers, "X-Quiz-Summary": "cache-unavailable" },
+      });
+    }
   }
 
   const summary = await generateSummary(signals);
