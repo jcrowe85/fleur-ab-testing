@@ -108,6 +108,9 @@ export async function POST(req: Request) {
       : null;
   const persona =
     typeof body.persona === "string" && body.persona.length <= 64 ? body.persona : null;
+  /* Anything that is not literally "tap" is treated as the quiz, so an older
+     caller that has never heard of this field keeps its existing rows. */
+  const source = body.source === "tap" ? ("tap" as const) : ("quiz" as const);
 
   /* No answers means nothing to summarise. Not an error — the theme asks
      before it necessarily has a full set, and a null here just means it keeps
@@ -119,7 +122,7 @@ export async function POST(req: Request) {
     });
   }
 
-  const signals = { persona, answers };
+  const signals = { persona, answers, source };
   const signature = summarySignature(signals);
 
   /* Cache first, and count the read. The counter is the only visibility into

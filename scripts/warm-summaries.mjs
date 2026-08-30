@@ -97,6 +97,7 @@ function tapCells() {
         commitment: "moderate",
         n: 0,
         answers: { damage, commitment: ["moderate"] },
+        source: "tap",
       });
     }
   }
@@ -118,7 +119,7 @@ let count = 0;
 for (const row of rows) {
   if (count++ >= limit) break;
 
-  const signals = { persona: row.persona, answers: row.answers };
+  const signals = { persona: row.persona, answers: row.answers, source: row.source ?? "quiz" };
   const signature = summarySignature(signals);
   const label = `${row.persona} / ${row.damage} / ${row.commitment}`.padEnd(38);
 

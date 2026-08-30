@@ -91,6 +91,22 @@ export type Signals = {
   persona: string | null;
   /** Raw answer set, as the quiz recorded it. Used for the prompt, not the key. */
   answers: Record<string, unknown>;
+  /**
+   * How much this shopper actually told us, and it is part of the cache key.
+   *
+   * "quiz" is thirteen answers: her scalp, her texture, what she has tried, how
+   * long it has run. Copy written from that references those specifics, which
+   * is what makes it good.
+   *
+   * "tap" is one chip and maybe a modifier. Nothing else is known.
+   *
+   * These cannot share a row, and the reason is not quality — it is that
+   * quiz-derived copy says "your prescription" and "your oily scalp" to a
+   * shopper who tapped one button and mentioned neither. Shipped that way
+   * briefly; a menopause tap returned a paragraph about a prescription the
+   * reader had never mentioned. Same signature, someone else's answers.
+   */
+  source?: "quiz" | "tap";
 };
 
 /** The icons the theme owns. The model chooses from this list; it never draws
@@ -145,6 +161,8 @@ function damageClass(answers: Record<string, unknown>): string {
 export function summarySignature(signals: Signals): string {
   const a = signals.answers;
   const parts = [
+    /* First, so the two populations can never collide. See Signals.source. */
+    signals.source === "tap" ? "tap" : "quiz",
     signals.persona || "general",
     damageClass(a),
     arr(a.commitment)[0] || "unstated",
@@ -253,6 +271,27 @@ MEDICAL SIGNALS: if her answers mention a medication or condition, give it ONE c
 
 `;
 
+/**
+ * Appended for taps only, after the signals rather than in the system prompt —
+ * the system block is cached and must stay byte-identical across both paths.
+ *
+ * Every line here closes something observed going wrong. A tap knows her cause
+ * and how she treats her hair. It does not know her scalp, her texture, her
+ * medications or how long this has run, and the model will happily supply all
+ * four if not told they are absent.
+ */
+const TAP_CONSTRAINT = `IMPORTANT — you have been told almost nothing about this person.
+
+She tapped one button. The lines above are the whole of what she said.
+
+You do NOT know: her scalp condition, her hair texture or type, what treatments she has tried, whether she takes any medication, how long this has been going on, where on her head it shows, or her age.
+
+Do not mention any of them. Specifically, never write "your prescription", "your oily scalp", "coarse hair", "years of colour", "what you've already tried", or any other detail she did not give you. A sentence that describes a stranger is worse than a general one — she will know it is not about her.
+
+Write only from her cause and, if given, how she treats her hair. Being general about what you were not told is correct here; inventing it is not.
+
+The three beats and every claim rule still apply. The bridge still has to name the broken step in her cause and attach the claim to that same step — you have enough for that, because her cause is the one thing she did tell you.`;
+
 /* ── Generation ───────────────────────────────────────────────────────────── */
 
 /** Compact, readable rendering of the answers for the prompt. Labels are the
@@ -337,7 +376,15 @@ export async function generateSummary(signals: Signals): Promise<Summary | null>
         system: [
           { type: "text", text: SYSTEM, cache_control: { type: "ephemeral" } },
         ],
-        messages: [{ role: "user", content: describe(signals) }],
+        messages: [
+          {
+            role: "user",
+            content:
+              signals.source === "tap"
+                ? `${describe(signals)}\n\n${TAP_CONSTRAINT}`
+                : describe(signals),
+          },
+        ],
       },
       { timeout: GENERATION_TIMEOUT_MS, maxRetries: MAX_RETRIES },
     );
