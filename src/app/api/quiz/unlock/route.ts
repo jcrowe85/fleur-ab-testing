@@ -225,9 +225,33 @@ export async function GET(req: Request) {
   const row = await db.quizUnlock.findUnique({ where: { visitorId } });
   const live = row && row.expiresAt.getTime() > Date.now();
 
+  /* Her persona rides along, so the PDP does not ask a question she has
+     already answered thirteen ways. The tap below the buy box is for shoppers
+     we know nothing about; putting it in front of someone who finished the
+     quiz would read as the page forgetting her.
+
+     Read separately from the unlock because they answer different questions —
+     the unlock is what she is owed and expires, this is what she told us and
+     does not. A shopper whose discount has lapsed should still get a page
+     written for her cause. Latest completion wins: a retake is a correction. */
+  let persona: string | null = null;
+  try {
+    const response = await db.quizResponse.findFirst({
+      where: { visitorId },
+      orderBy: { createdAt: "desc" },
+      select: { persona: true },
+    });
+    persona = response?.persona ?? null;
+  } catch {
+    /* Personalisation is a nicety; the unlock is not. Never let this cost her
+       the discount. */
+  }
+
   return new Response(
     JSON.stringify(
-      live ? { unlocked: true, target: row.target, bonus: row.bonus } : { unlocked: false }
+      live
+        ? { unlocked: true, target: row.target, bonus: row.bonus, persona }
+        : { unlocked: false, persona }
     ),
     { status: 200, headers }
   );

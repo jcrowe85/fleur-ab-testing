@@ -32,6 +32,8 @@
 import { db } from "@/lib/db";
 import { isAllowedOrigin } from "@/lib/ab";
 import { generateSummary, summarySignature, SUMMARY_MODEL } from "@/lib/summary";
+import { signAll } from "@/lib/ask";
+import type { Summary } from "@/lib/summary";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -48,6 +50,23 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 const MAX_BODY_BYTES = 8192;
+
+/**
+ * Stamp the follow-up questions on the way out.
+ *
+ * /api/quiz/ask answers nothing it did not itself write, so a question is only
+ * askable if it arrives with the signature this puts on it.
+ *
+ * Done on the way out rather than in the generator, so every path that can emit
+ * a question signs it. Today only the live paths carry any: the stored rows
+ * hold lead, points and bridge, and tap depth omits questions by design. If
+ * they are ever cached, they pass through here already rather than reaching the
+ * screen as three dead buttons.
+ */
+function withSignedQuestions(summary: Summary) {
+  if (!summary.questions?.length) return summary;
+  return { ...summary, questions: signAll(summary.questions) };
+}
 
 function corsHeaders(origin: string | null): Record<string, string> {
   if (!isAllowedOrigin(origin)) return {};
@@ -108,6 +127,9 @@ export async function POST(req: Request) {
       : null;
   const persona =
     typeof body.persona === "string" && body.persona.length <= 64 ? body.persona : null;
+  /* Anything that is not literally "tap" is treated as the quiz, so an older
+     caller that has never heard of this field keeps its existing rows. */
+  const source = body.source === "tap" ? ("tap" as const) : ("quiz" as const);
 
   /* No answers means nothing to summarise. Not an error — the theme asks
      before it necessarily has a full set, and a null here just means it keeps
@@ -119,8 +141,72 @@ export async function POST(req: Request) {
     });
   }
 
-  const signals = { persona, answers };
+  const signals = { persona, answers, source };
   const signature = summarySignature(signals);
+
+  /* ── Which comes first depends on which path is asking ──────────────────
+     TAP: cache first. The product page has no cover for a generation — she
+     taps and waits — and a tap collects so little that a stored answer for her
+     cause is as good as a fresh one. Pre-built is the right shape there.
+
+     QUIZ: generated first, every time, and the stored row is only a net
+     underneath. She answered thirteen questions and was promised an analysis;
+     serving her a row written for a different woman with the same three
+     signals is how "get your full analysis" became a promise this could not
+     keep. The cache stays as the fallback because live generation fails in
+     ways observed today — credit exhaustion, timeouts, a schema 400 — and a
+     slightly generic answer beats a blank screen. */
+  /* Both paths generate live now.
+
+     The tap was pre-built on the argument that it collects too little to be
+     worth generating. That was true when it collected one chip. It collects a
+     set — several causes at once, plus modifiers — and the interaction between
+     them is the part worth reading: perimenopause with a stressful stretch on
+     top is two different thinnings happening at once, not menopause with a
+     footnote. No practical number of pre-built rows covers that, and the ones
+     that existed answered the largest selection and ignored the rest.
+
+     The cache stays underneath both, keyed on the full selection, so a repeat
+     of a common pattern is instant and nothing is ever answered wrongly. */
+  /* Live-first for the quiz only.
+
+     Thirteen answers make almost every completion unique, so a stored row is
+     nearly always someone else's; she was promised an analysis and should get
+     one written for her.
+
+     The tap reads the cache first instead, and that is now safe in a way it
+     was not before: the key is the exact set she selected, so a hit is her
+     answer rather than a collapse of it. First shopper on a given combination
+     waits for a generation, everyone after is instant, and nobody is answered
+     with copy for a selection they did not make. */
+  if (source === "quiz") {
+    const fresh = await generateSummary(signals);
+    if (fresh) {
+      try {
+        await db.quizSummary.upsert({
+          where: { signature },
+          create: {
+            signature,
+            teaser: fresh.teaser,
+            lead: fresh.lead,
+            points: fresh.points,
+            bridge: fresh.bridge,
+            model: SUMMARY_MODEL,
+            persona,
+            hits: 1,
+          },
+          update: { hits: { increment: 1 } },
+        });
+      } catch {
+        /* The net failing to record itself must not cost her the answer. */
+      }
+      return new Response(JSON.stringify({ summary: withSignedQuestions(fresh) }), {
+        status: 200,
+        headers: { ...headers, "X-Quiz-Summary": "generated" },
+      });
+    }
+    /* Live generation failed. Fall through to whatever is stored. */
+  }
 
   /* Cache first, and count the read. The counter is the only visibility into
      whether the signature is coarse enough to be worth having — a table where
@@ -135,10 +221,29 @@ export async function POST(req: Request) {
       status: 200,
       headers: { ...headers, "X-Quiz-Summary": "cache-hit" },
     });
-  } catch {
-    /* No row yet. Fall through and write one. */
+  } catch (e) {
+    /* Only "no such row" may fall through to a generation.
+       This was a bare catch, which meant any database hiccup — a cold
+       connection on the first request after a deploy, a pooler blip — was read
+       as a cache miss and answered by spending 8-26 seconds and real money
+       regenerating a row that already existed. Observed doing exactly that on
+       the first requests against a freshly started server.
+       Anything that is not P2025 is a failure to *read* the cache, not evidence
+       the cache is empty, and the honest answer to it is no summary: the theme
+       already falls back gracefully, and a fallback costs nothing. */
+    const code = (e as { code?: string }).code;
+    if (code !== "P2025") {
+      console.error(`[quiz/summary] cache read failed: ${code ?? (e as Error).message}`);
+      return new Response(JSON.stringify({ summary: null }), {
+        status: 200,
+        headers: { ...headers, "X-Quiz-Summary": "cache-unavailable" },
+      });
+    }
   }
 
+  /* Cache missed. Both paths generate from here — for the quiz this is the
+     retry after a failed live attempt, for the tap it is the first shopper to
+     choose this combination. */
   const summary = await generateSummary(signals);
   if (!summary) {
     return new Response(JSON.stringify({ summary: null }), {
@@ -171,7 +276,7 @@ export async function POST(req: Request) {
        shopper the summary that has already been generated. */
   }
 
-  return new Response(JSON.stringify({ summary }), {
+  return new Response(JSON.stringify({ summary: withSignedQuestions(summary) }), {
     status: 200,
     headers: { ...headers, "X-Quiz-Summary": "generated" },
   });

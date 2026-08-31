@@ -47,20 +47,35 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { createHash } from "node:crypto";
 
-/* Opus 5, effort low. Low because this is ~150 words of tightly constrained
-   copy, not a reasoning problem — the depth would buy nothing and cost time.
-   It does not buy enough time to matter, mind: even at low effort a cold call
-   is 8-26s and loses to the analysing screen regardless. It is the right
-   setting for the work, not a latency strategy. */
+/* Opus 5.
+   Back to low, and the history is worth keeping because it was a mistake with a
+   lesson in it.
+
+   Effort went low -> high to fix bridges that came back as interchangeable
+   recitations of the same claim. It worked, so it looked like the fix. It was
+   not: what actually fixed them was making the bridge's structure mandatory —
+   beat one names her broken step and may not mention the product, beat two
+   attaches the claim to that same step and must carry a joining phrase. Once
+   the prompt said that, low effort produced the same bridges. The effort raise
+   had been paying to have the model infer a rule that could simply be written
+   down.
+
+   Measured at full depth, same prompt, same answers:
+     low     17.1s   419 words   all sections, bridge intact
+     medium  22.8s   419 words   all sections, bridge intact
+     high    39-61s  399 words   no better, and that spread is not noise to
+                                 plan around — it is the difference between
+                                 fitting inside the remaining screens and not.
+
+   SUMMARY_EFFORT overrides without a deploy, so this is tunable against real
+   output rather than argued about. */
 const MODEL = "claude-opus-5";
-/* Raised from "low", which was set when a generation was imagined to be racing
-   the 2.9s analysing screen. It never was — everything a shopper sees comes
-   from a row warmed offline by scripts/warm-summaries.mjs, where a few extra
-   seconds across 43 calls costs nothing. And the bridge is no longer a
-   formatting task: it has to identify the specific broken step in this
-   shopper's cause and attach the right claim to that step, which at low effort
-   came back as the same interchangeable recitation of the claim every time. */
-const EFFORT = "high";
+const EFFORT = (process.env.SUMMARY_EFFORT ?? "low") as
+  | "low"
+  | "medium"
+  | "high"
+  | "xhigh"
+  | "max";
 
 /** Generous on purpose, and this was wrong the first time round.
  *
@@ -91,6 +106,26 @@ export type Signals = {
   persona: string | null;
   /** Raw answer set, as the quiz recorded it. Used for the prompt, not the key. */
   answers: Record<string, unknown>;
+  /**
+   * How much this shopper actually told us, and it is part of the cache key.
+   *
+   * "quiz" is thirteen answers: her scalp, her texture, what she has tried, how
+   * long it has run. Copy written from that references those specifics, which
+   * is what makes it good.
+   *
+   * "tap" is one chip and maybe a modifier. Nothing else is known.
+   *
+   * These cannot share a row, and the reason is not quality — it is that
+   * quiz-derived copy says "your prescription" and "your oily scalp" to a
+   * shopper who tapped one button and mentioned neither. Shipped that way
+   * briefly; a menopause tap returned a paragraph about a prescription the
+   * reader had never mentioned. Same signature, someone else's answers.
+   */
+  source?: "quiz" | "tap";
+  /** Defaults to the shape of `source`: a tap gets a taste, the quiz gets the
+   *  thing the taste advertised. Passed separately because they are different
+   *  questions — where the answers came from, and how much room to spend. */
+  depth?: Depth;
 };
 
 /** The icons the theme owns. The model chooses from this list; it never draws
@@ -103,11 +138,30 @@ export const ICONS = [
 export type Icon = (typeof ICONS)[number];
 
 export type Point = { icon: Icon; heading: string; body: string };
+
+/**
+ * How much room the answer gets, and it is not a formatting switch.
+ *
+ * "tap" is a taste on the product page with something fuller behind a link.
+ * "full" is what that link promised. They were the same length once — every
+ * row, both paths, 136-165 words — which made "get your full analysis" a
+ * promise the quiz could not keep. A shopper who answers thirteen questions
+ * and receives the same paragraph she already read has been told the quiz was
+ * worth taking and found out it was not.
+ */
+export type Depth = "tap" | "full";
+
 export type Summary = {
   teaser: string;
   lead: string;
   points: Point[];
   bridge: string;
+  /** full only — the answers only she gave, and why each one matters. */
+  specifics?: string;
+  /** full only — month by month, honestly, including that month one is quiet. */
+  timeline?: string;
+  /** full only — what she would ask next, in her words, ready to be tapped. */
+  questions?: string[];
 };
 
 /* ── The signature ────────────────────────────────────────────────────────── */
@@ -144,13 +198,41 @@ function damageClass(answers: Record<string, unknown>): string {
  */
 export function summarySignature(signals: Signals): string {
   const a = signals.answers;
-  const parts = [
-    signals.persona || "general",
-    damageClass(a),
-    arr(a.commitment)[0] || "unstated",
-  ].map((s) => String(s).toLowerCase().trim());
 
-  return createHash("sha256").update(parts.join("|")).digest("hex").slice(0, 32);
+  /* A tap keys on everything she actually selected, not on the persona those
+     selections collapse to.
+
+     It used to key on the collapsed persona, and that made the multi-select a
+     lie: PRIORITY resolves perimenopause + menopause + stress down to
+     "menopause", so all three landed on the row that menopause alone would
+     have. She could see three chips lit and read copy that answered one. A
+     control that appears to listen and does not is worse than one that never
+     offered.
+
+     So the key is the selection set. Common patterns still repeat and still
+     hit; exotic ones miss and generate, which is correct — the answer should
+     be about what she chose, and if nobody has chosen that before then nobody
+     has written it yet. */
+  const parts =
+    signals.source === "tap"
+      ? [
+          "tap",
+          signals.persona || "general",
+          arr(a.lifestage).slice().sort().join(","),
+          arr(a.menopause_stage).slice().sort().join(","),
+          arr(a.damage).slice().sort().join(","),
+        ]
+      : [
+          "quiz",
+          signals.persona || "general",
+          damageClass(a),
+          arr(a.commitment)[0] || "unstated",
+        ];
+
+  return createHash("sha256")
+    .update(parts.map((s) => String(s).toLowerCase().trim()).join("|"))
+    .digest("hex")
+    .slice(0, 32);
 }
 
 /* ── The prompt ───────────────────────────────────────────────────────────── */
@@ -166,9 +248,16 @@ export function summarySignature(signals: Signals): string {
  * model that nobody reviews before a shopper reads it. Each rule below closes
  * something that would otherwise be shipped at scale and unreviewed.
  */
-const SYSTEM = `You write the summary shown at the top of the results screen of Fleur's hair quiz, directly above a discounted subscription offer for Fleur's Bloom Hair & Scalp Serum. The reader is a woman who has just answered about a dozen questions on her hair.
-
-═══ VOICE — this is the part that usually goes wrong ═══
+/**
+ * Voice, plain language and the claim rules — shared verbatim by the summary
+ * and by the follow-up answers.
+ *
+ * Factored rather than duplicated because these are the rules that keep
+ * unreviewed copy about hair loss safe to publish, and a second copy of them
+ * is a second copy to forget to update. The two prompts differ in what they
+ * are asked to write, never in what they are allowed to say.
+ */
+export const SHARED_RULES = `═══ VOICE — this is the part that usually goes wrong ═══
 
 Do NOT open by reciting her answers back as a list of attributes. That reads like a database record and it is the single most common failure here.
 
@@ -177,20 +266,46 @@ Do NOT open by reciting her answers back as a list of attributes. That reads lik
 
 Write to her as one of a group she would recognise herself in — "women in perimenopause who colour", "if you have been noticing more in the drain than usual". Recognition, not readout. She should feel described, not processed.
 
+═══ PLAIN LANGUAGE — the second thing that goes wrong ═══
+
+She is not a clinician. She is a woman who noticed more hair in the shower and is trying to work out what to do. Write for someone reading on a phone who did not come here to study.
+
+Measured, the copy this replaces scored grade 8 on Flesch-Kincaid, which sounds acceptable — but that metric counts syllables, not ideas, and the weight was never in the words. It was in unglossed jargon and in metaphors doing an explanation's work. Aim for grade 6.
+
+- Never use a technical term without saying what it means in the same breath. Not "follicle signalling" but "the signal that tells your hair to keep growing". Not "the anagen phase" but "the stretch when a hair is actively growing".
+- Concrete beats abstract. Not "the layer deciding what grows next" but "your scalp, where new hair starts".
+- One idea per sentence. If a sentence has an em-dash carrying a second thought, split it.
+- Do not make her assemble the picture from a metaphor. "The strand is being asked to survive more with less" is writing, not explaining.
+- Short sentences. Average about twelve words. Some can be five.
+- Say "your hair", "your scalp", "the shower drain", "your part" — things she can see.
+
+GIVE EXAMPLES. This is the fastest way to make a mechanism land, and the copy this replaces almost never did it. After explaining something, show it:
+  "hair spends less time growing" → "a hair that used to grow for four years now grows for two, so it never gets as long or as thick before it goes"
+  "colour lifts the cuticle" → "like a roof tile lifted at the edge — water gets out, and the strand dries faster than it should"
+  "diffuse thinning" → "not a bald patch. More like the same number of hairs, each one a little finer, so your ponytail is thinner than it was"
+An example is not decoration; if she cannot picture it, she has not understood it.
+
+You may name an ingredient (GHK-Cu, copper peptides) because that is a proper noun and she may want to look it up. You may not leave a *process* unexplained.
+
 Other voice rules:
 - Warm, calm, direct. Plain English. Second person.
 - No exclamation marks. No "amazing", "journey", "gorgeous", "queen", "bestie".
 - Never open with "Based on your answers" or "It sounds like".
 - Contractions are fine. Sound like a knowledgeable person talking, not a leaflet.
 
-═══ THE JOB ═══
+═══ MORE THAN ONE CAUSE ═══
 
-Three things, in order:
-1. Show her the answers were actually read — through recognition, per the voice rules.
-2. Explain what is going on, in mechanism terms she can follow.
-3. Bridge to the serum, and give her a reason to believe it applies to HER situation specifically.
+She may have named several. Do not pick the largest and quietly drop the rest — she can see what she selected, and copy that answers only one of them tells her the page was not listening.
 
-Point 3 is the one that is usually missing and it matters most. Many readers — especially women in menopause — are not unconvinced about the price. They are unconvinced anything works at all, often after trying several things that did not. Do not ignore that. Name the doubt where the signals suggest it (moderate or minimal commitment, "tried lots"), then answer it with mechanism rather than enthusiasm.
+The combination IS the story, and combinations are not additive. Say how they interact.
+
+  perimenopause + a stressful stretch — not menopause with a footnote. A slow, even thinning that was already underway, and then a sudden shed dropped on top of it. They look different from each other: one is gradual and spread out, the other arrives in weeks and then stops. Name both, and say which is which, because she is watching two things happen at once and cannot tell them apart.
+
+  family history + menopause — the inherited pattern decides where, the hormones decide when. It was always going to happen at the part and the crown; falling oestrogen is why it started now rather than in ten years.
+
+  medication + anything else — the medical cause comes first and goes to her doctor, and then say plainly what the other cause is still doing, because it does not stop mattering while she sorts that out.
+
+If she named only one, none of this applies — write to the one she gave.
 
 ═══ WHAT THE PRODUCT IS, AND THE ONLY CLAIMS YOU MAY MAKE ═══
 
@@ -214,44 +329,77 @@ FORBIDDEN, without exception:
 - Do not mention free gifts, bundles, or anything that ships with the order. They are not on this screen.
 
 MEDICAL SIGNALS (medication, thyroid, PCOS): say plainly the underlying cause is the first thing to address and worth raising with her doctor. Position the routine as working alongside that, never instead of it. Do not push the offer in this case.
+`;
+
+const SYSTEM = `You write the summary shown at the top of the results screen of Fleur's hair quiz, directly above a discounted subscription offer for Fleur's Bloom Hair & Scalp Serum. The reader is a woman who has just answered about a dozen questions on her hair.
+
+${SHARED_RULES}
+═══ THE JOB ═══
+
+Three things, in order:
+1. Show her the answers were actually read — through recognition, per the voice rules.
+2. Explain what is going on, in mechanism terms she can follow.
+3. Bridge to the serum, and give her a reason to believe it applies to HER situation specifically.
+
+Point 3 is the one that is usually missing and it matters most. Many readers — especially women in menopause — are not unconvinced about the price. They are unconvinced anything works at all, often after trying several things that did not. Do not ignore that. Name the doubt where the signals suggest it (moderate or minimal commitment, "tried lots"), then answer it with mechanism rather than enthusiasm.
 
 ═══ OUTPUT ═══
 
-This screen is already text-heavy and sits directly above the price. Every budget below is a hard ceiling, and they are set so that hitting each one lands the whole block at 110-130 words. Write short. If a sentence can lose four words, lose them.
+You will be told which of two depths to write, and they are genuinely different pieces of work. Do not write the short one at length or the long one thinly.
 
-"teaser" — 18-24 words, never more than 24. The recognition opener. Ends mid-thought with the … character, because a "read full analysis" link follows it. Never a complete stop.
+──────── DEPTH: tap ────────
 
-"lead" — one sentence, max 20 words. What is most likely going on.
+She tapped one button on the product page. This is a taste, and something fuller sits behind a link.
 
-"points" — EXACTLY 3. Not 2, not 4. Each is:
-    "icon"    — one of: hormone, scalp, strand, follicle, routine, clock, doctor, colour
-    "heading" — 3-5 words, sentence case, no full stop
-    "body"    — ONE sentence, max 18 words. Two sentences is the most common overrun here; do not write two.
-  Point 1: the mechanism behind her pattern.
-  Point 2: what is specific to her — scalp, processing, tension, how long it has run.
-  Point 3: what a daily scalp routine is actually for here.
+Total 130-160 words across lead + points + bridge.
 
-"bridge" — 55-70 words. This is the most important field and the one most likely to come back generic. Read the rule below twice.
+"teaser"  — 18-24 words, ends mid-thought with … . The recognition opener.
+"lead"    — one sentence, max 20 words. What is most likely going on.
+"points"  — EXACTLY 3. { icon, heading 3-5 words, body ONE sentence max 18 words }.
+"bridge"  — 28-35 words. The three beats, compressed.
+"specifics", "timeline", "questions" — omit entirely.
 
-It appears on the page under the heading "The solution with Bloom", so she already knows a product is coming. Do not spend words announcing it. What she does not know is why THIS product answers HER problem, and that is the only thing this field is for.
+──────── DEPTH: full ────────
 
-═══ THREE BEATS, IN ORDER, ALL THREE REQUIRED ═══
+She answered thirteen questions and was promised a full analysis. If this reads like the tap version she will feel cheated, and she will be right — that is the single worst outcome for this field. It must be visibly, obviously more.
 
-BEAT 1 — her broken step. What specifically has gone wrong or been lost in HER cause. It must NOT contain "Bloom", "peptide", "serum", "copper", "GHK" or any claim; it is about her body. It must be impossible to reuse under a different cause — name the actual thing: the oestrogen that fell, the follicles that went to rest together, the inherited cycle that shortens each round, the pregnancy hormones that dropped.
+Total 380-450 words. Use the room.
 
-BEAT 2 — Bloom, acting on that exact step. Connect an approved claim to the step named in beat 1, and carry a joining phrase — "that same", "exactly that", "the step your body stopped". Without one you have written two unrelated sentences and it does not count.
-
-BEAT 3 — what that means for her, and this is the beat that was missing. Beats 1 and 2 explain; beat 3 is why she would act. Not a promise, not a timeline, not "results". It is the consequence of the mechanism being addressed at all — that the signal has somewhere to come from now, that the follicles have a scalp worth restarting into, that this is the layer everything she has already tried was not touching. End on her, not on the ingredient.
-
-  BAD — stops after beat 2, so it explains and never turns:
-    "Oestrogen was holding that growth signal, and it isn't returning. Copper peptides like GHK-Cu are studied for supporting that same follicle signalling from outside."
-
-  GOOD — the same two beats, then the turn:
-    "Oestrogen was holding that growth signal steady, and it isn't coming back on its own. Copper peptides act on that same signalling from the outside — GHK-Cu is studied for exactly that step. Which means the shampoos and thickening sprays were never wrong so much as aimed at the wrong layer: they treated the hair you have, not the signal deciding what grows next."
-
-MEDICAL SIGNALS: if her answers mention a medication or condition, give it ONE clause — the cause comes first and is worth raising with her doctor — and then get on with the three beats. It is a caveat, not the subject. Only when her whole picture is medical does the hand-off become the point, and then the three beats are replaced by it.
-
+"teaser"    — 18-24 words, ends with … .
+"lead"      — 2 sentences, max 45 words. What is most likely going on.
+"points"    — EXACTLY 4. { icon, heading 3-6 words, body 30-45 words }. Deeper than the tap's: explain the mechanism properly, in plain language.
+"specifics" — 60-80 words. THIS IS THE SECTION THE TAP CANNOT HAVE, and it is what makes the analysis full. Use the answers only she gave: her scalp, her hair type and texture, how long it has run, where it shows, what she has already tried. Name them. Say what each one changes about her situation. Nothing generic may appear here — if a sentence would be true of another woman with the same cause, cut it.
+"timeline"  — 50-70 words. What actually happens, month by month, if she starts. Be honest that month one shows nothing. No promises, no guaranteed outcomes — describe the process, not a result.
+"bridge"    — 55-70 words. The three beats in full.
+"questions" — EXACTLY 3. Questions she would plausibly ask next, given HER answers, that nothing above has answered. Each 5-12 words, phrased as she would ask it. Specific to her: "Will this work while I am on my thyroid medication?" not "How long until results?". These are shown as things she can tap to ask.
 `;
+
+/**
+ * Appended for taps only, after the signals rather than in the system prompt —
+ * the system block is cached and must stay byte-identical across both paths.
+ *
+ * Every line here closes something observed going wrong. A tap knows her cause
+ * and how she treats her hair. It does not know her scalp, her texture, her
+ * medications or how long this has run, and the model will happily supply all
+ * four if not told they are absent.
+ */
+const TAP_CONSTRAINT = `IMPORTANT — you have been told almost nothing about this person.
+
+She tapped one button. The lines above are the whole of what she said.
+
+You do NOT know: her scalp condition, her hair texture or type, what treatments she has tried, whether she takes any medication, how long this has been going on, where on her head it shows, or her age.
+
+Do not mention any of them. Specifically, never write "your prescription", "your oily scalp", "coarse hair", "years of colour", "what you've already tried", or any other detail she did not give you. A sentence that describes a stranger is worse than a general one — she will know it is not about her.
+
+Write only from her cause and, if given, how she treats her hair. Being general about what you were not told is correct here; inventing it is not.
+
+The three beats and every claim rule still apply. The bridge still has to name the broken step in her cause and attach the claim to that same step — you have enough for that, because her cause is the one thing she did tell you.`;
+
+/** A tap is a taste; anything else was asked thirteen questions and promised
+ *  more than a taste. */
+function depthOf(signals: Signals): Depth {
+  return signals.depth ?? (signals.source === "tap" ? "tap" : "full");
+}
 
 /* ── Generation ───────────────────────────────────────────────────────────── */
 
@@ -328,7 +476,13 @@ export async function generateSummary(signals: Signals): Promise<Summary | null>
                   },
                 },
                 bridge: { type: "string" },
+                specifics: { type: "string" },
+                timeline: { type: "string" },
+                questions: { type: "array", items: { type: "string" } },
               },
+              /* The three long-form fields are not required: at tap depth they
+                 are explicitly omitted, and a schema demanding them would make
+                 the model pad the short version to satisfy it. */
               required: ["teaser", "lead", "points", "bridge"],
               additionalProperties: false,
             },
@@ -337,7 +491,18 @@ export async function generateSummary(signals: Signals): Promise<Summary | null>
         system: [
           { type: "text", text: SYSTEM, cache_control: { type: "ephemeral" } },
         ],
-        messages: [{ role: "user", content: describe(signals) }],
+        messages: [
+          {
+            role: "user",
+            content: [
+              describe(signals),
+              `DEPTH: ${depthOf(signals)}`,
+              signals.source === "tap" ? TAP_CONSTRAINT : "",
+            ]
+              .filter(Boolean)
+              .join("\n\n"),
+          },
+        ],
       },
       { timeout: GENERATION_TIMEOUT_MS, maxRetries: MAX_RETRIES },
     );
@@ -385,19 +550,38 @@ export async function generateSummary(signals: Signals): Promise<Summary | null>
           (ICONS as readonly string[]).includes(p.icon),
       )
       .map((p) => ({ icon: p.icon, heading: p.heading.trim(), body: p.body.trim() }))
-      .slice(0, 3);
-    if (points.length !== 3) return null;
+      .slice(0, depthOf(signals) === "full" ? 4 : 3);
+    if (points.length < 3) return null;
 
     /* The ellipsis is load-bearing: the teaser is rendered directly against a
        "read full analysis" control, and a teaser that closes its own sentence
        makes that control look like it leads nowhere. Append rather than
        reject — the copy is fine, only the punctuation drifted. */
-    return {
+    const out: Summary = {
       teaser: /[…]$/.test(teaser) ? teaser : teaser.replace(/[.\s]+$/, "") + "…",
       lead,
       points,
       bridge,
     };
+
+    /* Carried only at full depth. A tap that came back with a timeline anyway
+       would quietly erase the difference the link promised, so the depth we
+       asked for decides what is kept — not what the model happened to send. */
+    if (depthOf(signals) === "full") {
+      if (typeof parsed.specifics === "string" && parsed.specifics.trim()) {
+        out.specifics = parsed.specifics.trim();
+      }
+      if (typeof parsed.timeline === "string" && parsed.timeline.trim()) {
+        out.timeline = parsed.timeline.trim();
+      }
+      const qs = (Array.isArray(parsed.questions) ? parsed.questions : [])
+        .filter((q): q is string => typeof q === "string" && q.trim().length > 0)
+        .map((q) => q.trim())
+        .slice(0, 3);
+      if (qs.length) out.questions = qs;
+    }
+
+    return out;
   } catch (e) {
     /* Swallowed for the shopper, never for us.
        Every failure here degrades to the theme's own copy, which is the right
@@ -415,3 +599,4 @@ export async function generateSummary(signals: Signals): Promise<Summary | null>
 }
 
 export const SUMMARY_MODEL = MODEL;
+
