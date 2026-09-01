@@ -192,3 +192,47 @@ model QuizSummary {
   @@index([persona])
   @@index([createdAt])
 }
+
+/// Interaction events — many per visitor, in order.
+///
+/// Deliberately not AbEvent. That table has a unique index on
+/// [test, visitorId, event], which is exactly right for the funnel it was built
+/// for — a shopper who adds to cart five times is one add-to-cart — and exactly
+/// wrong for anything asked more than once. Quiz progress is nine steps, and a
+/// tap is a control someone may press twice. Both collapse to a single row
+/// under that index, and the questions they exist to answer disappear.
+///
+/// It is also why the persona tap's own tracking has never recorded anything:
+/// it fires `persona_tap` at the funnel ingest, which accepts three event names
+/// and drops the rest. The feature has been live for two days with no way to
+/// tell how many people used it.
+///
+/// Append-only, no dedupe, ordered by createdAt. Aggregation is the reader's
+/// job: distinct visitors where it matters, raw counts where repetition is the
+/// signal.
+model AbInteraction {
+  id        String @id @default(cuid())
+  test      String
+  bucket    String
+  visitorId String
+  /// quiz_view | quiz_step | quiz_done | tap_view | tap_cause | tap_answer |
+  /// tap_add | tap_quiz | tap_close
+  event String
+  /// The step id for quiz_step, the cause chosen for tap_cause, the persona for
+  /// tap_answer. Indexed, because "where did they stop" is a group-by on this.
+  step String?
+  /// Position in the sequence, so exit depth is a max() rather than a lookup
+  /// against a step order that may change.
+  idx Int?
+  /// Groups one run of the quiz or one opening of the sheet, so a retake is a
+  /// second funnel rather than an overwrite of the first.
+  attempt String?
+  path    String?
+  detail  Json?
+  createdAt DateTime @default(now())
+
+  @@index([test, event, bucket])
+  @@index([visitorId, createdAt])
+  @@index([event, step])
+  @@index([createdAt])
+}
