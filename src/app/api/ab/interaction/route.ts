@@ -36,6 +36,7 @@ const EVENTS = [
   "tap_cause",
   "tap_answer",
   "tap_add",
+  "tap_plans",
   "tap_quiz",
   "tap_close",
 ] as const;
