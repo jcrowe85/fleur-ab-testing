@@ -39,6 +39,9 @@ const EVENTS = [
   "tap_plans",
   "tap_quiz",
   "tap_close",
+  "double_view",
+  "double_add",
+  "double_decline",
 ] as const;
 
 function corsHeaders(origin: string | null): Record<string, string> {
