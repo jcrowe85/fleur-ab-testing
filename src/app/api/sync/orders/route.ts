@@ -91,8 +91,15 @@ async function sync() {
 
   // Only running tests are reconciled — a stopped test's totals must not move
   // after the decision was made.
+  //
+  // Newest first, and each gets its own slice of the budget below. More than
+  // one test runs at a time now (a split test and a standalone surface), and a
+  // long backfill on one must not be able to starve the others of attribution:
+  // the budget is spent in order, so without both of these a catching-up test
+  // at the head of the list would consume every run forever.
   const tests = await db.abTest.findMany({
     where: { startedAt: { not: null }, stoppedAt: null },
+    orderBy: { startedAt: "desc" },
   });
   if (tests.length === 0) {
     return { tests: 0, scanned: 0, attributed: 0, elapsedMs: 0, results: [] };
@@ -108,8 +115,12 @@ async function sync() {
   let scannedTotal = 0;
   let attributedTotal = 0;
 
-  for (const test of tests) {
+  for (const [i, test] of tests.entries()) {
     const attr = cartAttributeFor(test.key);
+    /* This test's share of the run, as an absolute deadline. Absolute rather
+       than a per-test stopwatch so a test that finishes early hands its unused
+       time to the next one instead of wasting it. */
+    const deadline = startedAtMs + (BUDGET_MS * (i + 1)) / tests.length;
 
     /* Resume from the newest order already attributed, not from the start of
        the test.
@@ -145,13 +156,20 @@ async function sync() {
     while (hasNext) {
       /* Out of budget. Everything written so far has moved the watermark, so
          the next run picks up from here rather than starting over. */
-      if (Date.now() - startedAtMs > BUDGET_MS) {
+      if (Date.now() > deadline) {
         truncated = true;
         break;
       }
       const data: {
         orders: { pageInfo: { hasNextPage: boolean; endCursor: string }; nodes: ShopifyOrder[] };
       } = await shopify(ORDERS_QUERY, { first: PAGE_SIZE, after, query: filter });
+
+      /* One batch per page rather than a round trip per order.
+         Sequential upserts were the whole cost of a run: 138 orders took 45
+         seconds, almost none of it Shopify, which put a 25-day backfill about
+         20 hours away on an hourly cron. Batched, the page costs one round trip
+         and the same backfill is minutes. */
+      const writes = [];
 
       for (const order of data.orders.nodes) {
         scanned++;
@@ -166,27 +184,34 @@ async function sync() {
         const visitorId =
           order.customAttributes.find((a) => a.key === "_ab_vid")?.value ?? null;
 
-        await db.abOrder.upsert({
-          where: { id: order.id },
-          create: {
-            id: order.id,
-            test: test.key,
-            bucket,
-            orderName: order.name,
-            visitorId,
-            totalPrice: order.totalPriceSet.shopMoney.amount,
-            currency: order.totalPriceSet.shopMoney.currencyCode,
-            placedAt: new Date(order.createdAt),
-          },
-          update: {
-            bucket,
-            totalPrice: order.totalPriceSet.shopMoney.amount,
-            currency: order.totalPriceSet.shopMoney.currencyCode,
-            placedAt: new Date(order.createdAt),
-          },
-        });
+        writes.push(
+          db.abOrder.upsert({
+            where: { id: order.id },
+            create: {
+              id: order.id,
+              test: test.key,
+              bucket,
+              orderName: order.name,
+              visitorId,
+              totalPrice: order.totalPriceSet.shopMoney.amount,
+              currency: order.totalPriceSet.shopMoney.currencyCode,
+              placedAt: new Date(order.createdAt),
+            },
+            update: {
+              bucket,
+              totalPrice: order.totalPriceSet.shopMoney.amount,
+              currency: order.totalPriceSet.shopMoney.currencyCode,
+              placedAt: new Date(order.createdAt),
+            },
+          })
+        );
         attributed++;
       }
+
+      /* All or nothing per page, which is what keeps the watermark honest: a
+         partial page would leave the newest order written and an older one
+         missing, and the next run resumes from the newest. */
+      if (writes.length) await db.$transaction(writes);
 
       hasNext = data.orders.pageInfo.hasNextPage;
       after = data.orders.pageInfo.endCursor;
