@@ -142,12 +142,22 @@ function Verdict({
   row,
   isPrimary,
   windowComplete,
+  singleArm,
 }: {
   row: MetricRow;
   isPrimary: boolean;
   windowComplete: boolean;
+  /** A surface that is measured but not split — see FunnelTable. */
+  singleArm: boolean;
 }) {
   const c = row.comparison;
+
+  /* Nothing to compare, by design. Without this the row reads "Not enough data
+     · need ~N/arm", which is the one thing it does not mean: there is no second
+     arm to collect, and never will be. */
+  if (singleArm) {
+    return <span className="opacity-70">Standalone — not split</span>;
+  }
 
   if (c.underpowered) {
     return (
@@ -193,22 +203,27 @@ function Verdict({
 /**
  * Opens the page under test with the arm forced.
  *
- * `?ab=a` is the theme's QA override, and it is not read-only: it writes the
- * assignment cookie and the visit records an exposure like any other. Hence the
- * warning in the tooltip — a spot-check from a normal window puts you in the
- * denominator of your own test.
+ * `abqa`, not `ab3`. The old parameter was readable enough that a marketing
+ * link carried it by accident: a creator ad shipped 2026-08-31 with `&ab3=b` in
+ * its destination URL and pinned every clicker into arm B for 90 days, which is
+ * where test 02's sample-ratio mismatch came from. Those ads are still live, so
+ * the rerun answers to a name none of them contain, which makes them inert.
+ *
+ * Forcing is no longer sticky either — it writes nothing over an existing
+ * assignment — but it does still record an exposure, hence the tooltip: a
+ * spot-check from a normal window puts you in the denominator of your own test.
  */
 function ArmLink({ bucket, surfaceUrl }: { bucket: "a" | "b"; surfaceUrl: string | null }) {
   if (!surfaceUrl) return null;
   const arm = bucket.toUpperCase();
-  const href = `${surfaceUrl}${surfaceUrl.includes("?") ? "&" : "?"}ab=${bucket}`;
+  const href = `${surfaceUrl}${surfaceUrl.includes("?") ? "&" : "?"}abqa=${bucket}`;
   return (
     <a
       href={href}
       target="_blank"
       rel="noopener noreferrer"
       aria-label={`Open arm ${arm} on the live storefront in a new tab`}
-      title={`Open arm ${arm} on the live storefront. Forcing an arm sets the assignment cookie and records an exposure — use a private window.`}
+      title={`Open arm ${arm} on the live storefront. Forcing an arm records an exposure, and in a browser with no assignment yet it sets a session-scoped one — use a private window.`}
       className="inline-flex size-5 shrink-0 items-center justify-center rounded opacity-45 transition hover:bg-black/5 hover:opacity-100 dark:hover:bg-white/10"
     >
       <svg
@@ -231,6 +246,12 @@ function ArmLink({ bucket, surfaceUrl }: { bucket: "a" | "b"; surfaceUrl: string
 
 function FunnelTable({ report }: { report: TestReport }) {
   const { totals, rows, test, windowComplete, surfaceUrl } = report;
+  /* Some surfaces are measured without being split — the Donny TOF lander
+     renders one page for everyone and reports its funnel under its own key, so
+     its result stands alone rather than diluting the test it sits beside. One
+     arm with every exposure and the other empty is that, not a catastrophe in
+     arm B, and the table says so rather than inviting the wrong reading. */
+  const singleArm = totals.a.exposures > 0 && totals.b.exposures === 0;
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-sm border-collapse min-w-[860px]">
@@ -239,14 +260,20 @@ function FunnelTable({ report }: { report: TestReport }) {
             <th className="py-2 pr-4 font-medium">Metric</th>
             <th className="py-2 px-3 font-medium text-right">
               <span className="inline-flex items-center gap-1.5">
-                A — original
+                {singleArm ? "Measured" : "A — original"}
                 <ArmLink bucket="a" surfaceUrl={surfaceUrl} />
               </span>
             </th>
             <th className="py-2 px-3 font-medium text-right">
               <span className="inline-flex items-center gap-1.5">
-                B — redesign
-                <ArmLink bucket="b" surfaceUrl={surfaceUrl} />
+                {singleArm ? (
+                  <span className="opacity-45 font-normal">not split</span>
+                ) : (
+                  <>
+                    B — redesign
+                    <ArmLink bucket="b" surfaceUrl={surfaceUrl} />
+                  </>
+                )}
               </span>
             </th>
             <th className="py-2 px-3 font-medium text-right">Lift</th>
@@ -292,7 +319,12 @@ function FunnelTable({ report }: { report: TestReport }) {
                   {c.ciLow === null ? "—" : `${signedPct(c.ciLow)} … ${signedPct(c.ciHigh!)}`}
                 </td>
                 <td className="py-2.5 pl-3 text-xs">
-                  <Verdict row={row} isPrimary={isPrimary} windowComplete={windowComplete} />
+                  <Verdict
+                    row={row}
+                    isPrimary={isPrimary}
+                    windowComplete={windowComplete}
+                    singleArm={singleArm}
+                  />
                 </td>
               </tr>
             );
