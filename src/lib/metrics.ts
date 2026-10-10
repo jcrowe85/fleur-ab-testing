@@ -58,6 +58,24 @@ export interface Pacing {
   daily: DailyNewVisitors[];
 }
 
+/**
+ * Another live surface, shown as an extra column beside the arms.
+ *
+ * Measured but not split — the Donny TOF lander is the first of these: one page
+ * for everyone, its own test key, its own funnel. It earns a column because the
+ * question "how does the lander do against the PDP" is worth answering on one
+ * screen, and it earns the warning label because the answer is not an
+ * experiment: nobody was randomised between a lander and a product page, so the
+ * two populations differ in every way that ad targeting differs. A difference
+ * here describes two surfaces. It does not attribute the difference to either.
+ */
+export interface CompanionSurface {
+  key: string;
+  /** Short label for the column — the name up to its first dash. */
+  label: string;
+  totals: ArmTotals;
+}
+
 export interface TestReport {
   test: {
     key: string;
@@ -70,6 +88,8 @@ export interface TestReport {
     stoppedAt: Date | null;
   };
   totals: Record<Bucket, ArmTotals>;
+  /** Other live surfaces that are measured but not split. Empty on their own views. */
+  companions: CompanionSurface[];
   rows: MetricRow[];
   daysElapsed: number | null;
   daysPlanned: number;
@@ -100,6 +120,71 @@ function emptyTotals(bucket: Bucket): ArmTotals {
     purchase: 0,
     revenue: 0,
   };
+}
+
+/**
+ * The live surfaces that are measured without being split, for the extra
+ * columns beside the arms.
+ *
+ * "Single-armed" is read from the data rather than declared: a running test
+ * with exposures in bucket A and none in bucket B is a surface the theme pins,
+ * which is exactly what this is for. Deriving it means a surface that is
+ * accidentally pinned shows up here too — which is the right outcome, because
+ * a split test with an empty arm is something you want to see on this page
+ * rather than discover at the end.
+ */
+async function companionSurfaces(excludeKey: string): Promise<CompanionSurface[]> {
+  const others = await db.abTest.findMany({
+    where: { key: { not: excludeKey }, startedAt: { not: null }, stoppedAt: null },
+    orderBy: { startedAt: "desc" },
+  });
+
+  const out: CompanionSurface[] = [];
+  for (const other of others) {
+    const window = other.startedAt ? { gte: other.startedAt } : undefined;
+    const [events, orders] = await Promise.all([
+      db.abEvent.groupBy({
+        by: ["bucket", "event"],
+        where: { test: other.key, ...(window ? { createdAt: window } : {}) },
+        _count: { _all: true },
+      }),
+      db.abOrder.groupBy({
+        by: ["bucket"],
+        where: { test: other.key, ...(window ? { placedAt: window } : {}) },
+        _count: { _all: true },
+        _sum: { totalPrice: true },
+      }),
+    ]);
+
+    const exposedB = events
+      .filter((g) => g.bucket === "b" && g.event === "exposure")
+      .reduce((n, g) => n + g._count._all, 0);
+    const exposedA = events
+      .filter((g) => g.bucket === "a" && g.event === "exposure")
+      .reduce((n, g) => n + g._count._all, 0);
+    if (exposedB > 0 || exposedA === 0) continue;
+
+    const totals = emptyTotals("a");
+    for (const g of events) {
+      if (g.bucket !== "a") continue;
+      if (g.event === "exposure") totals.exposures += g._count._all;
+      else if ((FUNNEL_EVENTS as readonly string[]).includes(g.event)) {
+        totals[g.event as "add_to_cart" | "initiate_checkout"] += g._count._all;
+      }
+    }
+    for (const g of orders) {
+      if (g.bucket !== "a") continue;
+      totals.purchase += g._count._all;
+      totals.revenue += Number(g._sum.totalPrice ?? 0);
+    }
+
+    out.push({
+      key: other.key,
+      label: other.name.split(/\s+[—–-]\s+/)[0],
+      totals,
+    });
+  }
+  return out;
 }
 
 export async function getTestReport(testKey: string): Promise<TestReport | null> {
@@ -239,6 +324,13 @@ export async function getTestReport(testKey: string): Promise<TestReport | null>
     }
   }
 
+  /* Only a split test gets companion columns, and only from surfaces that are
+     genuinely single-armed. Shown on the view where the comparison is useful
+     and left off the companion's own view, where it would be a column of
+     itself. */
+  const companions =
+    totals.b.exposures > 0 ? await companionSurfaces(test.key) : [];
+
   return {
     test: {
       key: test.key,
@@ -251,6 +343,7 @@ export async function getTestReport(testKey: string): Promise<TestReport | null>
       stoppedAt: test.stoppedAt,
     },
     totals,
+    companions,
     rows,
     daysElapsed,
     daysPlanned: test.plannedDays,

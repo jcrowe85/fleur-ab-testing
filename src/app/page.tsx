@@ -245,7 +245,7 @@ function ArmLink({ bucket, surfaceUrl }: { bucket: "a" | "b"; surfaceUrl: string
 }
 
 function FunnelTable({ report }: { report: TestReport }) {
-  const { totals, rows, test, windowComplete, surfaceUrl } = report;
+  const { totals, rows, test, windowComplete, surfaceUrl, companions } = report;
   /* Some surfaces are measured without being split — the Donny TOF lander
      renders one page for everyone and reports its funnel under its own key, so
      its result stands alone rather than diluting the test it sits beside. One
@@ -254,7 +254,12 @@ function FunnelTable({ report }: { report: TestReport }) {
   const singleArm = totals.a.exposures > 0 && totals.b.exposures === 0;
   return (
     <div className="overflow-x-auto">
-      <table className="w-full text-sm border-collapse min-w-[860px]">
+      <table
+        className="w-full text-sm border-collapse"
+        /* Grows with the extra surfaces rather than cramming them — the wrapper
+           scrolls horizontally on a narrow screen. */
+        style={{ minWidth: `${860 + companions.length * 120}px` }}
+      >
         <thead>
           <tr className="text-left border-b border-black/15 dark:border-white/20">
             <th className="py-2 pr-4 font-medium">Metric</th>
@@ -276,6 +281,19 @@ function FunnelTable({ report }: { report: TestReport }) {
                 )}
               </span>
             </th>
+            {companions.map((comp) => (
+              <th key={comp.key} className="py-2 px-3 font-medium text-right">
+                <span className="inline-flex items-center gap-1.5">
+                  {comp.label}
+                  <span
+                    className="rounded bg-black/8 dark:bg-white/15 px-1.5 py-0.5 text-[10px] font-normal uppercase tracking-wide"
+                    title="A separate surface, measured but not split. Nobody was randomised between it and the arms, so a difference here compares two pages — it does not attribute the difference to either."
+                  >
+                    not randomised
+                  </span>
+                </span>
+              </th>
+            ))}
             <th className="py-2 px-3 font-medium text-right">Lift</th>
             <th className="py-2 px-3 font-medium text-right">95% CI (abs.)</th>
             <th className="py-2 pl-3 font-medium">Reading</th>
@@ -286,6 +304,11 @@ function FunnelTable({ report }: { report: TestReport }) {
             <td className="py-2.5 pr-4 opacity-70">Visitors exposed</td>
             <td className="py-2.5 px-3 text-right tabular-nums">{num(totals.a.exposures)}</td>
             <td className="py-2.5 px-3 text-right tabular-nums">{num(totals.b.exposures)}</td>
+            {companions.map((comp) => (
+              <td key={comp.key} className="py-2.5 px-3 text-right tabular-nums">
+                {num(comp.totals.exposures)}
+              </td>
+            ))}
             <td className="py-2.5 px-3 text-right opacity-40">—</td>
             <td className="py-2.5 px-3 text-right opacity-40">—</td>
             <td className="py-2.5 pl-3 opacity-60">Denominator for every rate below</td>
@@ -312,6 +335,16 @@ function FunnelTable({ report }: { report: TestReport }) {
                   {num(row.b)}
                   <div className="text-xs opacity-60">{pct(c.rateB)}</div>
                 </td>
+                {companions.map((comp) => {
+                  const x = comp.totals[row.key];
+                  const n = comp.totals.exposures;
+                  return (
+                    <td key={comp.key} className="py-2.5 px-3 text-right tabular-nums">
+                      {num(x)}
+                      <div className="text-xs opacity-60">{n > 0 ? pct(x / n) : "—"}</div>
+                    </td>
+                  );
+                })}
                 <td className="py-2.5 px-3 text-right tabular-nums">
                   {c.relativeLift === null ? "—" : signedPct(c.relativeLift)}
                 </td>
@@ -334,6 +367,11 @@ function FunnelTable({ report }: { report: TestReport }) {
             <td className="py-2.5 pr-4 opacity-70">Revenue</td>
             <td className="py-2.5 px-3 text-right tabular-nums">{money(totals.a.revenue)}</td>
             <td className="py-2.5 px-3 text-right tabular-nums">{money(totals.b.revenue)}</td>
+            {companions.map((comp) => (
+              <td key={comp.key} className="py-2.5 px-3 text-right tabular-nums">
+                {money(comp.totals.revenue)}
+              </td>
+            ))}
             <td className="py-2.5 px-3 text-right opacity-40">—</td>
             <td className="py-2.5 px-3 text-right opacity-40">—</td>
             <td className="py-2.5 pl-3 text-xs opacity-60">
