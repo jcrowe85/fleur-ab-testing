@@ -1,3 +1,5 @@
+import { Fragment } from "react";
+
 import {
   getTestReport,
   listTests,
@@ -252,13 +254,18 @@ function FunnelTable({ report }: { report: TestReport }) {
      arm with every exposure and the other empty is that, not a catastrophe in
      arm B, and the table says so rather than inviting the wrong reading. */
   const singleArm = totals.a.exposures > 0 && totals.b.exposures === 0;
+  const rpv = {
+    a: totals.a.exposures > 0 ? totals.a.revenue / totals.a.exposures : 0,
+    b: totals.b.exposures > 0 ? totals.b.revenue / totals.b.exposures : 0,
+  };
   return (
     <div className="overflow-x-auto">
       <table
         className="w-full text-sm border-collapse"
         /* Grows with the extra surfaces rather than cramming them — the wrapper
-           scrolls horizontally on a narrow screen. */
-        style={{ minWidth: `${860 + companions.length * 120}px` }}
+           scrolls horizontally on a narrow screen. Two columns each: the
+           surface and its lift against the control. */
+        style={{ minWidth: `${860 + companions.length * 230}px` }}
       >
         <thead>
           <tr className="text-left border-b border-black/15 dark:border-white/20">
@@ -281,22 +288,25 @@ function FunnelTable({ report }: { report: TestReport }) {
                 )}
               </span>
             </th>
-            {companions.map((comp) => (
-              <th key={comp.key} className="py-2 px-3 font-medium text-right">
-                <span className="inline-flex items-center gap-1.5">
-                  {comp.label}
-                  <span
-                    className="rounded bg-black/8 dark:bg-white/15 px-1.5 py-0.5 text-[10px] font-normal uppercase tracking-wide"
-                    title="A separate surface, measured but not split. Nobody was randomised between it and the arms, so a difference here compares two pages — it does not attribute the difference to either."
-                  >
-                    not randomised
-                  </span>
-                </span>
-              </th>
-            ))}
-            <th className="py-2 px-3 font-medium text-right">Lift</th>
+            <th className="py-2 px-3 font-medium text-right">Lift — B vs A</th>
             <th className="py-2 px-3 font-medium text-right">95% CI (abs.)</th>
             <th className="py-2 pl-3 font-medium">Reading</th>
+            {companions.map((comp) => (
+              <Fragment key={comp.key}>
+                <th className="py-2 px-3 pl-6 font-medium text-right border-l border-black/15 dark:border-white/20">
+                  <span className="inline-flex items-center gap-1.5">
+                    {comp.label}
+                    <span
+                      className="rounded bg-black/8 dark:bg-white/15 px-1.5 py-0.5 text-[10px] font-normal uppercase tracking-wide"
+                      title="A separate surface, measured but not split. Nobody was randomised between it and the arms, so its lift against A compares two pages — it does not attribute the difference to either."
+                    >
+                      not randomised
+                    </span>
+                  </span>
+                </th>
+                <th className="py-2 px-3 font-medium text-right">Lift — vs A</th>
+              </Fragment>
+            ))}
           </tr>
         </thead>
         <tbody>
@@ -304,14 +314,17 @@ function FunnelTable({ report }: { report: TestReport }) {
             <td className="py-2.5 pr-4 opacity-70">Visitors exposed</td>
             <td className="py-2.5 px-3 text-right tabular-nums">{num(totals.a.exposures)}</td>
             <td className="py-2.5 px-3 text-right tabular-nums">{num(totals.b.exposures)}</td>
-            {companions.map((comp) => (
-              <td key={comp.key} className="py-2.5 px-3 text-right tabular-nums">
-                {num(comp.totals.exposures)}
-              </td>
-            ))}
             <td className="py-2.5 px-3 text-right opacity-40">—</td>
             <td className="py-2.5 px-3 text-right opacity-40">—</td>
             <td className="py-2.5 pl-3 opacity-60">Denominator for every rate below</td>
+            {companions.map((comp) => (
+              <Fragment key={comp.key}>
+                <td className="py-2.5 px-3 pl-6 text-right tabular-nums border-l border-black/10 dark:border-white/15">
+                  {num(comp.totals.exposures)}
+                </td>
+                <td className="py-2.5 px-3 text-right opacity-40">—</td>
+              </Fragment>
+            ))}
           </tr>
 
           {rows.map((row) => {
@@ -335,16 +348,6 @@ function FunnelTable({ report }: { report: TestReport }) {
                   {num(row.b)}
                   <div className="text-xs opacity-60">{pct(c.rateB)}</div>
                 </td>
-                {companions.map((comp) => {
-                  const x = comp.totals[row.key];
-                  const n = comp.totals.exposures;
-                  return (
-                    <td key={comp.key} className="py-2.5 px-3 text-right tabular-nums">
-                      {num(x)}
-                      <div className="text-xs opacity-60">{n > 0 ? pct(x / n) : "—"}</div>
-                    </td>
-                  );
-                })}
                 <td className="py-2.5 px-3 text-right tabular-nums">
                   {c.relativeLift === null ? "—" : signedPct(c.relativeLift)}
                 </td>
@@ -359,6 +362,29 @@ function FunnelTable({ report }: { report: TestReport }) {
                     singleArm={singleArm}
                   />
                 </td>
+                {companions.map((comp) => {
+                  const x = comp.totals[row.key];
+                  const n = comp.totals.exposures;
+                  const rate = n > 0 ? x / n : null;
+                  /* Against arm A, the control — the same baseline arm B is
+                     measured against, so the two lifts are readable side by
+                     side. Still not an experiment: see the header. */
+                  const lift =
+                    rate !== null && c.rateA > 0 ? rate / c.rateA - 1 : null;
+                  return (
+                    <Fragment key={comp.key}>
+                      <td className="py-2.5 px-3 pl-6 text-right tabular-nums border-l border-black/10 dark:border-white/15">
+                        {num(x)}
+                        <div className="text-xs opacity-60">
+                          {rate === null ? "—" : pct(rate)}
+                        </div>
+                      </td>
+                      <td className="py-2.5 px-3 text-right tabular-nums">
+                        {lift === null ? "—" : signedPct(lift)}
+                      </td>
+                    </Fragment>
+                  );
+                })}
               </tr>
             );
           })}
@@ -367,16 +393,50 @@ function FunnelTable({ report }: { report: TestReport }) {
             <td className="py-2.5 pr-4 opacity-70">Revenue</td>
             <td className="py-2.5 px-3 text-right tabular-nums">{money(totals.a.revenue)}</td>
             <td className="py-2.5 px-3 text-right tabular-nums">{money(totals.b.revenue)}</td>
-            {companions.map((comp) => (
-              <td key={comp.key} className="py-2.5 px-3 text-right tabular-nums">
-                {money(comp.totals.revenue)}
-              </td>
-            ))}
             <td className="py-2.5 px-3 text-right opacity-40">—</td>
             <td className="py-2.5 px-3 text-right opacity-40">—</td>
             <td className="py-2.5 pl-3 text-xs opacity-60">
               Not tested — revenue per visitor is heavy-tailed, so a proportion test does not apply
             </td>
+            {companions.map((comp) => (
+              <Fragment key={comp.key}>
+                <td className="py-2.5 px-3 pl-6 text-right tabular-nums border-l border-black/10 dark:border-white/15">
+                  {money(comp.totals.revenue)}
+                </td>
+                <td className="py-2.5 px-3 text-right opacity-40">—</td>
+              </Fragment>
+            ))}
+          </tr>
+
+          {/* Per visitor, because the totals above cannot be compared across
+              surfaces that saw different amounts of traffic — the lander taking
+              a tenth of the volume will always show a tenth of the money, and
+              that says nothing about the page. This row is the one to read. */}
+          <tr>
+            <td className="py-2.5 pr-4 opacity-70">Revenue / visitor</td>
+            <td className="py-2.5 px-3 text-right tabular-nums">{money(rpv.a)}</td>
+            <td className="py-2.5 px-3 text-right tabular-nums">{money(rpv.b)}</td>
+            <td className="py-2.5 px-3 text-right tabular-nums">
+              {rpv.a > 0 ? signedPct(rpv.b / rpv.a - 1) : "—"}
+            </td>
+            <td className="py-2.5 px-3 text-right opacity-40">—</td>
+            <td className="py-2.5 pl-3 text-xs opacity-60">
+              Directional only — order values are too spread out for this window to resolve
+            </td>
+            {companions.map((comp) => {
+              const n = comp.totals.exposures;
+              const v = n > 0 ? comp.totals.revenue / n : null;
+              return (
+                <Fragment key={comp.key}>
+                  <td className="py-2.5 px-3 pl-6 text-right tabular-nums border-l border-black/10 dark:border-white/15">
+                    {v === null ? "—" : money(v)}
+                  </td>
+                  <td className="py-2.5 px-3 text-right tabular-nums">
+                    {v !== null && rpv.a > 0 ? signedPct(v / rpv.a - 1) : "—"}
+                  </td>
+                </Fragment>
+              );
+            })}
           </tr>
         </tbody>
       </table>
