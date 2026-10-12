@@ -391,7 +391,11 @@ export default async function Dashboard({
 }) {
   const { test: requested } = await searchParams;
   const tests = await listTests();
-  const testKey = requested ?? tests[0]?.key ?? "pdp_redesign_2607";
+  /* Open on the newest test that is actually split. A standalone surface can
+     be newer — they are declared together — and opening on one shows a tenth
+     of the traffic with no comparison in it, which looks like a broken test. */
+  const testKey =
+    requested ?? tests.find((t) => t.split)?.key ?? tests[0]?.key ?? "pdp_redesign_2607";
   const report = await getTestReport(testKey);
 
   if (!report) {
@@ -431,6 +435,11 @@ export default async function Dashboard({
                 }`}
               >
                 {t.key}
+                {/* So a tab with a tenth of the traffic and no second arm is
+                    recognisable as that before it is read as a dead test. */}
+                {t.startedAt && !t.split ? (
+                  <span className="ml-1.5 opacity-50">· not split</span>
+                ) : null}
               </a>
             ))}
           </nav>

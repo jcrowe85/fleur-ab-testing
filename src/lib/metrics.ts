@@ -355,7 +355,7 @@ export async function getTestReport(testKey: string): Promise<TestReport | null>
 }
 
 export async function listTests() {
-  return db.abTest.findMany({
+  const tests = await db.abTest.findMany({
     // nulls last is load-bearing, not tidiness. The dashboard opens on
     // tests[0], and Postgres sorts NULLs first on DESC — so a test that was
     // declared but never started outranked the one actually running, and the
@@ -363,6 +363,23 @@ export async function listTests() {
     orderBy: [{ startedAt: { sort: "desc", nulls: "last" } }, { createdAt: "desc" }],
     select: { key: true, name: true, startedAt: true, stoppedAt: true },
   });
+
+  /* Which of these are actually split, so the dashboard can open on an
+     experiment rather than on a surface that is only being measured.
+     This is not cosmetic. The lander started nine tenths of a second after the
+     rerun, won "most recently started", and became the landing view — 41
+     visitors and almost no funnel beside a test collecting thousands, which
+     reads exactly like a broken test and was reported as one. */
+    const exposures = await db.abEvent.groupBy({
+    by: ["test", "bucket"],
+    where: { event: "exposure", test: { in: tests.map((t) => t.key) } },
+    _count: { _all: true },
+  });
+  const hasB = new Set(
+    exposures.filter((g) => g.bucket === "b" && g._count._all > 0).map((g) => g.test)
+  );
+
+  return tests.map((t) => ({ ...t, split: hasB.has(t.key) }));
 }
 
 export { BUCKETS };
