@@ -144,8 +144,26 @@ async function sync() {
        test's bucket, and the analysis would exclude it anyway. */
     const since =
       resumeFrom > test.startedAt! ? resumeFrom : test.startedAt!;
-    // Shopify's search grammar, not GraphQL — created_at with an ISO bound.
-    const filter = `created_at:>=${since.toISOString()}`;
+    /* Shopify's search grammar, not GraphQL — created_at with an ISO bound,
+       and the bound has to be QUOTED.
+
+       Unquoted, the colons in the time are term separators: Shopify reads
+       `created_at:>=2026-10-23T18` and treats the rest as its own junk term,
+       so the time of day is silently dropped and the window opens far wider
+       than asked. It never errors, and for most of this route's life it never
+       showed: the window only ever grew, and a wider window just re-upserts
+       rows that are already there.
+
+       It showed the moment a test was restarted. pdp_quiz_unlock_2310 was
+       restarted at 18:30:09 on 2026-10-23 with its rows cleared, and the next
+       hourly run — asking for orders at or after 18:30:09 — pulled back 20
+       orders placed between 08:54 and 18:16, because carts stamped earlier in
+       the day still carried the arm. The restarted run read 21 orders against
+       74 exposed visitors: a 28% purchase rate.
+
+       Proven against the live shop: unquoted returns #27533 at 07:01, quoted
+       returns #27589 at 18:31. */
+    const filter = `created_at:>='${since.toISOString()}'`;
 
     let after: string | null = null;
     let hasNext = true;
@@ -177,6 +195,13 @@ async function sync() {
         // deliberately: a refund says something about the product, not about
         // which page the shopper saw.
         if (order.cancelledAt) continue;
+
+        /* Belt and braces against the window, rather than trusting a remote
+           query parser to have understood the bound. An order placed before
+           the test started cannot belong to the run even if its cart carries
+           the arm — which is exactly what a restart leaves behind, since the
+           attribute outlives the rows. */
+        if (new Date(order.createdAt) < test.startedAt!) continue;
 
         const bucket = order.customAttributes.find((a) => a.key === attr)?.value;
         if (!isBucket(bucket)) continue;
