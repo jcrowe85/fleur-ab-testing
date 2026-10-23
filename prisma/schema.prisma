@@ -216,7 +216,12 @@ model AbInteraction {
   bucket    String
   visitorId String
   /// quiz_view | quiz_step | quiz_done | tap_view | tap_cause | tap_answer |
-  /// tap_add | tap_quiz | tap_close
+  /// tap_add | tap_plans | tap_quiz | tap_close | double_view | double_add |
+  /// double_decline | home_header_cta
+  ///
+  /// The authoritative list is the allowlist in src/app/api/ab/interaction —
+  /// anything absent from it is rejected, so this comment is a convenience and
+  /// that array is the contract.
   event String
   /// The step id for quiz_step, the cause chosen for tap_cause, the persona for
   /// tap_answer. Indexed, because "where did they stop" is a group-by on this.

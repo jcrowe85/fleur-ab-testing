@@ -42,6 +42,12 @@ const EVENTS = [
   "double_view",
   "double_add",
   "double_decline",
+  /* The homepage mobile header CTA. assets/ab-track.js has been firing this
+     since the button shipped and it was never listed here, so every press was
+     answered with "bad-event" and dropped — the same silent failure the note
+     above describes, repeated on the next control added. There are no rows for
+     it at all; the ones from before this change are gone. */
+  "home_header_cta",
 ] as const;
 
 function corsHeaders(origin: string | null): Record<string, string> {
