@@ -28,6 +28,17 @@ import { PrismaClient } from "@prisma/client";
 
 const TESTS = [
 {
+  key: "pdp_quiz_unlock_2310",
+  name: "PDP quiz unlock — standing discount vs price earned through the quiz (rerun after the plan-strip fix)",
+  hypothesis:
+    "Does making the shopper earn the discount sell more than simply giving it to her? Arm A is the page as it stands: subscription plans at the discounted price, $48 / $132 / $240, with \"Save 17%\" style flags. Arm B shows the Full Price plans — $58 / $174 / $348 — and turns those flags into links into the thirteen-question quiz, which earns the price back and adds 5% more for a phone number. It is a price rise gated behind a questionnaire, so add to cart and order completion can move in opposite directions; the stopping rule is powered for order completion for exactly that reason.\n\nThird attempt at this question. The first two were lost to contamination and to the page changing underneath the test. This one is a rerun of pdp_quiz_unlock_1010 for a different and worse reason: arm B was never actually delivering what it promised. Appstle patches window.fetch and rewrote selling_plan on the quiz's add-to-cart, so a shopper who completed the quiz in a session where Appstle's widget sat on one-time — a clean browser, an incognito window — was charged $68 for a one-time bottle instead of the $48 subscription she had just earned, and her cart showed no discount at all. That was live for the whole of 1010 and for the 2708 run before it. Arm B's conversion was being measured against an arm B that was partly broken, so neither run can answer the question and both are retired rather than pooled. Fixed in the theme on 2026-10-23 (fleur-gifting-timline ef0a64e), verified live across 1-, 3- and 6-month plans before this row was declared.\n\nThe precondition is a promise, not a line of Liquid: the longform product page, its sections and its scripts do not change while this is live. Arm A's add-to-cart rose 51% during the 2708 run against arm B's 8%, almost entirely because of work improving how the discount is sold — which is the thing arm B hides until the quiz is passed. Also carried over: add-to-cart in arm B is under-counted, because the quiz's clean-realm add bypasses the fetch wrapper in assets/ab-track.js. Fix that before reading the secondary metrics, or read only exposure, initiate_checkout and purchase, which are measured elsewhere.\n\nThe TOF landers are no longer measured here or anywhere. tof_lander_donny_1010 is stopped and the lander surfaces publish no window.__ab at all, so they beacon nothing and stamp no cart attribute; compare lander variants by URL in Shopify Analytics, as LANDER_VARIANTS.md says.",
+  // Order completion, not add to cart. Arm B deliberately raises the sticker
+  // price and offers a way to earn it back, so the two can move in opposite
+  // directions and add_to_cart on its own would read as a loss either way.
+  primaryMetric: "purchase",
+  plannedDays: 28,
+},
+{
   key: "pdp_quiz_unlock_1010",
   name: "PDP quiz unlock — standing discount vs price earned through the quiz (clean rerun)",
   hypothesis:

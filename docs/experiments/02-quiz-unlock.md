@@ -2,13 +2,46 @@
 
 | | |
 |---|---|
-| **Test key** | `pdp_quiz_unlock_2708` (rerun of `pdp_quiz_unlock_2608`) |
-| **Running** | 2026-08-27 18:49 UTC → 2026-09-17 18:49 UTC (21 days planned) |
+| **Test key** | `pdp_quiz_unlock_2310` (fourth run: `_2608` → `_2708` → `_1010` → `_2310`) |
+| **Running** | 2026-10-23 08:30 UTC → 2026-11-20 08:30 UTC (28 days planned) |
 | **Surface** | `tryfleur.com/products/bloom-hair-scalp-serum-longform` |
-| **Primary metric** | Purchase |
-| **Status** | Running. **Treatment changed mid-flight on 2026-08-29 — see below.** |
+| **Primary metric** | Purchase (order completion) |
+| **Status** | Running. The three earlier runs are all stopped and **none of them can be read** — see the run history below. |
 
-## Treatment change, 2026-08-29
+## Run history — why this is the fourth attempt
+
+| key | ran | why it cannot be read |
+|---|---|---|
+| `pdp_quiz_unlock_2608` | 08-26 → 08-27 | Superseded after a day. |
+| `pdp_quiz_unlock_2708` | 08-27 → 10-10 | Treatment changed mid-flight on 08-29 (below). Then ~1,800 shoppers were pinned into arm B by a creator ad carrying `ab3=b`, giving a sample-ratio mismatch. Then the page under test took 74 commits, mostly improving how the discount is sold — the thing arm B hides until the quiz is passed. Arm A's add-to-cart rose 51% across the run against arm B's 8%; the arms stopped being a comparison on about 09-07. |
+| `pdp_quiz_unlock_1010` | 10-10 → 10-23 | **Arm B was broken the whole time.** Appstle patches `window.fetch` and rewrote `selling_plan` on the quiz's own add-to-cart, so a shopper who completed the quiz in a session where Appstle's hidden widget sat on one-time — a clean browser, an incognito window — was charged **$68 for a one-time bottle instead of the $48 subscription she had just earned**, and her cart showed no discount at all. Arm B's conversion was measured against an arm B that only sometimes delivered its own offer. Also present through the whole of `_2708`. |
+
+The `_1010` and `_2708` runs are **not pooled into `_2310`** and should not be
+pooled with each other. Their rows are kept for the record, not for analysis.
+
+The defect was fixed in the theme on 2026-10-23 (`fleur-gifting-timline`
+`ef0a64e`): plan-carrying adds now go out through a clean-realm iframe `fetch`
+that Appstle never patched. Verified live across 1-, 3- and 6-month plans,
+accepted and declined second bottle, before `_2310` was declared.
+
+### Known measurement gap carried into this run
+
+Arm B's `add_to_cart` is **under-counted by roughly a third**. The fetch wrapper
+in `assets/ab-track.js` cannot see the quiz's clean-realm add, which is now the
+main subscribe path in arm B. Fix that before reading add-to-cart, or read only
+`exposure`, `initiate_checkout` and `purchase` — purchase comes from the order
+sync and is unaffected.
+
+### TOF landers are no longer measured
+
+`tof_lander_donny_1010` was stopped on 2026-10-23. Seven landers all reported
+under one key named after the first of them, so it could never tell them apart —
+`LANDER_VARIANTS.md` always said to compare them by URL. The lander surfaces now
+publish no `window.__ab`, so `ab-track.js` returns at its first line: no events
+and no `ab_` cart attribute, so lander orders carry no arm either. They still
+render arm A's prices; nothing about their pricing changed.
+
+## Treatment change, 2026-08-29 (applies to `_2708`)
 
 A summary of the shopper's answers was added to the quiz results screen, above
 the offer: a one-or-two-sentence teaser with a "read full analysis" expander.
