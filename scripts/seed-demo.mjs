@@ -79,7 +79,8 @@ for (let day = 0; day < DAYS; day++) {
         events.push({ test: KEY, bucket, visitorId, event: "initiate_checkout", path: "/cart", template: "template-cart", createdAt: at });
         if (rand() < r.purchase / r.initiate_checkout) {
           orders.push({
-            id: `gid://shopify/Order/demo-${visitorId}`,
+            id: `demo-${KEY}-${visitorId}`,
+            orderId: `gid://shopify/Order/demo-${visitorId}`,
             test: KEY, bucket, orderName: `#D${vid}`, visitorId,
             totalPrice: (rand() < 0.25 ? 132 : 48).toFixed(2),
             currency: "USD", placedAt: at,

@@ -245,9 +245,9 @@ async function sync() {
 
         writes.push(
           db.abOrder.upsert({
-            where: { id: order.id },
+            where: { test_orderId: { test: test.key, orderId: order.id } },
             create: {
-              id: order.id,
+              orderId: order.id,
               test: test.key,
               bucket,
               orderName: order.name,
@@ -299,9 +299,9 @@ async function sync() {
 
           writes.push(
             db.abOrder.upsert({
-              where: { id: order.id },
+              where: { test_orderId: { test: test.key, orderId: order.id } },
               create: {
-                id: order.id,
+                orderId: order.id,
                 test: test.key,
                 bucket,
                 orderName: order.name,

@@ -63,7 +63,14 @@ model AbEvent {
 /// Sourced from Shopify rather than the browser — this is the only
 /// revenue-grade number in the test.
 model AbOrder {
-  id         String   @id /// Shopify order id
+  /// Surrogate. The Shopify order id used to be the primary key, which meant
+  /// an order could belong to exactly one test — so two tests running at once
+  /// fought over the same row: the second upsert overwrote the first's bucket
+  /// and left its `test`, producing rows like bf_models_1101/"b" that belong
+  /// to neither test and are dropped by both dashboards.
+  id         String   @id @default(cuid())
+  /// Shopify order id. One order, one row per test that claims it.
+  orderId    String
   test       String
   bucket     String
   orderName  String
@@ -75,6 +82,7 @@ model AbOrder {
 
   abTest AbTest @relation(fields: [test], references: [key], onDelete: Cascade)
 
+  @@unique([test, orderId])
   @@index([test, bucket, placedAt])
 }
 
