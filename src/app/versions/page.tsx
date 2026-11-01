@@ -293,8 +293,17 @@ export default async function VersionsPage() {
           <strong>Purchased</strong> and <strong>total sales</strong> do not come from the
           browser. They are reconciled hourly from Shopify: first from the{" "}
           <code>ab_{report.key}</code> attribute the cart carries to the order, and where that
-          is missing, from the product the order actually contains — each model sells its own
-          product, so an order names its page even when the cookie was lost.
+          is missing — a cookie cleared on the way to checkout, a cart finished on another
+          device — from the SKU the order contains. <code>Fleur-BF-*</code> is sold only from
+          the ladder and <code>Fleur-BFO-*</code> only from the offers pages, so those name
+          their page even when the cookie was lost.
+        </p>
+        <p>
+          That repair does not apply to <strong>model 1</strong>, and its purchases are a
+          floor rather than a count. <code>Fleur-1-variant</code> is the main catalogue
+          product, bought from email, from search, from the quiz — everywhere — so reading
+          the page from the SKU would pour the whole store into this one column. Model 1
+          keeps only the orders whose cart actually carried the attribute.
         </p>
         <p>
           <strong>First touch wins.</strong> A visitor belongs to the model whose page she

@@ -33,17 +33,29 @@ export interface VersionConfig {
   blurb: string;
   /** Where it lives, for the open-in-a-tab links. */
   paths: string[];
-  /**
-   * The Shopify product this model sells, as a numeric id.
-   *
-   * Each model has its own product, which is what makes an order attributable
-   * even when the cart attribute is missing — a cookie cleared between the add
-   * and the checkout, a shopper who finished on another device. The order sync
-   * falls back to this. It is not the primary key for attribution, because
-   * what is being measured is the page seen rather than the thing bought, and
-   * those come apart exactly often enough to be worth keeping separate.
-   */
+  /** The Shopify product this model sells. Documentation, and the admin link. */
   productId: string;
+  /**
+   * The SKU prefix that identifies this model's variants, or null for a model
+   * whose product is sold from everywhere.
+   *
+   * This is the order sync's fallback for a cart that reached checkout without
+   * its attribute — a cookie cleared on the way, a cart rebuilt on another
+   * device. Before the stamp carried keepalive, 7 of 26 orders in a day
+   * arrived with no arm at all, so the floor is worth having.
+   *
+   * It is a prefix on the SKU rather than the product id because the Admin
+   * token this app holds has read_orders but not read_products, so
+   * `lineItem.product` is denied to it while `lineItem.sku` is not.
+   *
+   * Null for the subscription model on purpose. Fleur-1-variant and its
+   * siblings are the main catalogue product, bought from the home page, from
+   * email, from the quiz, from search — everywhere. "Bought this SKU" implies
+   * "saw the ladder page" because Fleur-BF-* is sold from nowhere else, and
+   * the same for Fleur-BFO-*, but it implies nothing at all about model 1. A
+   * fallback there would quietly pour the whole store into one column.
+   */
+  skuPrefix: string | null;
 }
 
 export const VERSIONS: VersionConfig[] = [
@@ -53,6 +65,7 @@ export const VERSIONS: VersionConfig[] = [
     blurb: "Home page and the longform PDP. Subscribe and save, Appstle plans.",
     paths: ["/", "/products/bloom-hair-scalp-serum-longform"],
     productId: "8280308482227",
+    skuPrefix: null,
   },
   {
     id: "ladder",
@@ -63,6 +76,7 @@ export const VERSIONS: VersionConfig[] = [
       "/products/bloom-peptide-hair-scalp-serum-black-friday",
     ],
     productId: "8765857792179",
+    skuPrefix: "Fleur-BF-",
   },
   {
     id: "offers",
@@ -74,13 +88,35 @@ export const VERSIONS: VersionConfig[] = [
       "/products/bloom-peptide-hair-scalp-serum-bf-offers",
     ],
     productId: "8766154014899",
+    skuPrefix: "Fleur-BFO-",
   },
 ];
 
-/** Shopify product id -> arm, for the order sync's fallback. */
-export const PRODUCT_TO_VERSION: Record<string, string> = Object.fromEntries(
-  VERSIONS.map((v) => [v.productId, v.id])
-);
+/**
+ * SKU prefix -> arm, for the order sync's fallback. Longest prefix first, so a
+ * family that begins with another family's prefix cannot be swallowed by it.
+ */
+export const SKU_PREFIX_TO_VERSION: [string, string][] = VERSIONS.filter(
+  (v) => v.skuPrefix
+)
+  .map((v) => [v.skuPrefix as string, v.id] as [string, string])
+  .sort((a, b) => b[0].length - a[0].length);
+
+/**
+ * The arm a set of SKUs points at, or null.
+ *
+ * Null when none of them belongs to a model, and null when two do: two models
+ * in one cart is a shopper who crossed between pages, and guessing which page
+ * sold her is worse than leaving her out of both columns.
+ */
+export function versionFromSkus(skus: string[]): string | null {
+  const found = new Set<string>();
+  for (const sku of skus) {
+    const hit = SKU_PREFIX_TO_VERSION.find(([p]) => sku.startsWith(p));
+    if (hit) found.add(hit[1]);
+  }
+  return found.size === 1 ? [...found][0] : null;
+}
 
 export interface LandingRow {
   path: string;

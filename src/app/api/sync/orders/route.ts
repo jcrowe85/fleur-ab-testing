@@ -13,7 +13,7 @@
 
 import { db } from "@/lib/db";
 import { armsFor, cartAttributeFor } from "@/lib/ab";
-import { PRODUCT_TO_VERSION, VERSIONS_TEST_KEY } from "@/lib/versions";
+import { versionFromSkus, VERSIONS_TEST_KEY } from "@/lib/versions";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -45,30 +45,6 @@ interface ShopifyOrder {
   displayFinancialStatus: string | null;
   totalPriceSet: { shopMoney: { amount: string; currencyCode: string } };
   customAttributes: { key: string; value: string }[];
-}
-
-/**
- * The model an order bought, read off its line items.
- *
- * Each of the three Black Friday models sells its own product, so what is in
- * the order names the page it came from whenever the cart attribute is
- * missing — a cookie cleared between the add and the checkout, a cart rebuilt
- * on another device, an add that went through a transport the tracker cannot
- * see. Before the stamp carried keepalive, 7 of 26 orders in a day arrived
- * with no arm at all; this is the floor under that.
- *
- * Null when the order carries none of the three, and null when it carries more
- * than one: two models in one cart is a shopper who crossed between pages, and
- * guessing which page sold her is worse than leaving her out of both columns.
- */
-function versionFromProducts(ids: string[]): string | null {
-  const found = new Set<string>();
-  for (const gid of ids) {
-    const numeric = gid.split("/").pop() ?? "";
-    const version = PRODUCT_TO_VERSION[numeric];
-    if (version) found.add(version);
-  }
-  return found.size === 1 ? [...found][0] : null;
 }
 
 function authorized(req: Request): boolean {
@@ -111,7 +87,7 @@ const LINE_ITEMS_QUERY = `
     nodes(ids: $ids) {
       ... on Order {
         id
-        lineItems(first: 20) { nodes { product { id } } }
+        lineItems(first: 20) { nodes { sku } }
       }
     }
   }
@@ -218,6 +194,9 @@ async function sync() {
     let hasNext = true;
     let scanned = 0;
     let attributed = 0;
+    /* Per test, not per page: the response says the repair stopped working
+       even when the page that broke it was the first of several. */
+    const fallbackErrors: string[] = [];
     let truncated = false;
 
     while (hasNext) {
@@ -290,20 +269,31 @@ async function sync() {
 
       /* Second pass: what the unstamped orders actually bought. Batched at 25
          so the nested line-item connection stays inside the cost ceiling, and
-         skipped entirely on the common page where everything was stamped. */
-      for (let start = 0; start < unstamped.length; start += 25) {
+         skipped entirely on the common page where everything was stamped.
+
+         It is wrapped because it is a repair, not the job. The first version
+         of it asked for lineItem.product, which needs read_products — a scope
+         this token does not hold — and the rejection propagated out of the
+         whole route: every test stopped recording orders, including one that
+         had nothing to do with this code and had been attributing happily for
+         weeks. A best-effort improvement must not be able to do that, so a
+         failure here costs the orders it could have rescued and nothing more.
+         The next run retries them: an unattributed order is not written, so
+         it stays unattributed rather than being written wrong. */
+      for (let start = 0; start < unstamped.length && !fallbackErrors.length; start += 25) {
+        try {
         const batch = unstamped.slice(start, start + 25);
         const byId = new Map(batch.map((o) => [o.id, o]));
         const got: {
-          nodes: ({ id: string; lineItems: { nodes: { product: { id: string } | null }[] } } | null)[];
+          nodes: ({ id: string; lineItems: { nodes: { sku: string | null }[] } } | null)[];
         } = await shopify(LINE_ITEMS_QUERY, { ids: batch.map((o) => o.id) });
 
         for (const node of got.nodes) {
           if (!node) continue;
           const order = byId.get(node.id);
           if (!order) continue;
-          const bucket = versionFromProducts(
-            node.lineItems.nodes.map((li) => li.product?.id ?? "").filter(Boolean)
+          const bucket = versionFromSkus(
+            node.lineItems.nodes.map((li) => li.sku ?? "").filter(Boolean)
           );
           if (!bucket || !arms.includes(bucket)) continue;
 
@@ -334,6 +324,10 @@ async function sync() {
           );
           attributed++;
         }
+        } catch (err) {
+          fallbackErrors.push(err instanceof Error ? err.message : String(err));
+          console.error(`[sync/orders] ${test.key}: sku fallback failed`, err);
+        }
       }
 
       /* All or nothing per page, which is what keeps the watermark honest: a
@@ -351,6 +345,9 @@ async function sync() {
       test: test.key,
       scanned,
       attributed,
+      /* Surfaced rather than swallowed: the fallback silently doing nothing
+         looks exactly like a page that sold nothing. */
+      ...(fallbackErrors.length ? { fallbackError: fallbackErrors[0] } : {}),
       from: since.toISOString(),
       /* Loud on purpose. A truncated run is correct — it will finish next hour
          — but a run that is *always* truncated means the budget is no longer
