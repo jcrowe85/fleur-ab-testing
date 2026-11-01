@@ -63,3 +63,32 @@ export function clamp(v: unknown, max: number): string | null {
   if (!s) return null;
   return s.slice(0, max);
 }
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * Surfaces with more than two arms.
+ *
+ * The three Black Friday models are not an experiment. Traffic comes from the
+ * ad account, pointed at whichever page the campaign is selling, so the split
+ * is whatever media buying makes it — never balanced and never random. What is
+ * wanted is the funnel for each page side by side, which is the same machinery
+ * as a split test with the randomiser taken out: the arm is decided by the page
+ * rather than by a coin, and nothing here computes significance.
+ *
+ * Declared in code rather than in a column because the theme has to agree with
+ * it exactly. snippets/ab-assign.liquid maps a page to one of these ids; a
+ * rename on one side alone means the ingest rejects the arm and the column goes
+ * quietly empty, which is the failure this list exists to make findable.
+ * ──────────────────────────────────────────────────────────────────────────── */
+export const TEST_ARMS: Record<string, readonly string[]> = {
+  bf_models_1101: ["subscription", "ladder", "offers"],
+};
+
+/** The arms a test accepts. Anything not listed is the historical A/B pair. */
+export function armsFor(testKey: string): readonly string[] {
+  return TEST_ARMS[testKey] ?? BUCKETS;
+}
+
+/** Validates an incoming arm against the test it claims to belong to. */
+export function isArmOf(testKey: string, v: unknown): v is string {
+  return typeof v === "string" && armsFor(testKey).includes(v);
+}

@@ -28,6 +28,17 @@ import { PrismaClient } from "@prisma/client";
 
 const TESTS = [
 {
+  key: "bf_models_1101",
+  name: "Black Friday models — three pages measured side by side, not split",
+  hypothesis:
+    "Not an experiment. Three standalone Black Friday builds are live at once and traffic to each comes from the ad account, pointed at whichever page that campaign is selling — so the split is a media-buying decision, never balanced and never random, and no shopper was assigned to anything. Nothing here is a counterfactual for anything else: a difference between two rows describes two audiences as much as it describes two pages.\n\nWhat it records is the funnel for each, so the five numbers that were asked for sit in one table: traffic, add to cart, checkout, purchases and total sales, with the rates between them.\n\nThe three arms are the three models. 'subscription' is the home page and the longform PDP — Appstle plans, subscribe and save. 'ladder' is /pages/black-friday-bottles and its PDP — every bottle cheaper than the last, down to $25 from the fourth, one-time. 'offers' is /pages/black-friday-offers, /pages/black-friday-deal and their PDP — 25% off one bottle or buy two get the third free, one-time.\n\nAssignment is by page, not by coin: snippets/ab-assign.liquid maps the page to a model and writes the cookie on first touch, so a visitor belongs to the page that acquired her and her order is credited there rather than to whatever she browsed afterwards. Crossovers between models are recorded as an interaction rather than assumed away, and the dashboard shows the rate.\n\nPurchases and sales are reconciled from Shopify, first off the cart attribute and then, where that is missing, off the product the order contains — each model sells its own product, so an order names its page even when the cookie was lost. There is no stopping rule and no primary metric in the sense the other rows here mean it; plannedDays is the length of the sale.",
+  // There is nothing to power and nothing to stop. Carried because the column
+  // is not nullable, and because purchases are what the table is read for.
+  primaryMetric: "purchase",
+  // To the end of the sale, 2026-11-28.
+  plannedDays: 28,
+},
+{
   key: "pdp_quiz_unlock_2310",
   name: "PDP quiz unlock — standing discount vs price earned through the quiz (rerun after the plan-strip fix)",
   hypothesis:

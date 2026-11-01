@@ -16,7 +16,7 @@
  */
 
 import { db } from "@/lib/db";
-import { clamp, isAllowedOrigin, isBucket, isFunnelEvent } from "@/lib/ab";
+import { clamp, isAllowedOrigin, isArmOf, isFunnelEvent } from "@/lib/ab";
 
 // Prisma needs the Node runtime; force-dynamic because this is a pure write.
 export const runtime = "nodejs";
@@ -90,7 +90,10 @@ export async function POST(req: Request) {
   const { bucket, event } = payload;
 
   if (!test || !visitorId) return done("missing-test-or-visitor", origin, 400);
-  if (!isBucket(bucket)) return done("bad-bucket", origin, 400);
+  /* Against the arms this test declares, not a fixed pair. A split test takes
+     "a" and "b"; the Black Friday surfaces take one id per page. The list is
+     in lib/ab.ts and the theme has to match it — see the note there. */
+  if (!isArmOf(test, bucket)) return done("bad-bucket", origin, 400);
   if (!isFunnelEvent(event)) return done("bad-event", origin, 400);
 
   // The test must be declared up front. This is the guard that stops a typo in

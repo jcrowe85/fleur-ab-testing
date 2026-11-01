@@ -12,7 +12,8 @@
  */
 
 import { db } from "@/lib/db";
-import { cartAttributeFor, isBucket } from "@/lib/ab";
+import { armsFor, cartAttributeFor } from "@/lib/ab";
+import { PRODUCT_TO_VERSION, VERSIONS_TEST_KEY } from "@/lib/versions";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -46,6 +47,30 @@ interface ShopifyOrder {
   customAttributes: { key: string; value: string }[];
 }
 
+/**
+ * The model an order bought, read off its line items.
+ *
+ * Each of the three Black Friday models sells its own product, so what is in
+ * the order names the page it came from whenever the cart attribute is
+ * missing — a cookie cleared between the add and the checkout, a cart rebuilt
+ * on another device, an add that went through a transport the tracker cannot
+ * see. Before the stamp carried keepalive, 7 of 26 orders in a day arrived
+ * with no arm at all; this is the floor under that.
+ *
+ * Null when the order carries none of the three, and null when it carries more
+ * than one: two models in one cart is a shopper who crossed between pages, and
+ * guessing which page sold her is worse than leaving her out of both columns.
+ */
+function versionFromProducts(ids: string[]): string | null {
+  const found = new Set<string>();
+  for (const gid of ids) {
+    const numeric = gid.split("/").pop() ?? "";
+    const version = PRODUCT_TO_VERSION[numeric];
+    if (version) found.add(version);
+  }
+  return found.size === 1 ? [...found][0] : null;
+}
+
 function authorized(req: Request): boolean {
   const secret = process.env.CRON_SECRET;
   if (!secret) return false;
@@ -72,6 +97,25 @@ async function shopify<T>(query: string, variables: Record<string, unknown>): Pr
   if (json.errors) throw new Error(`Shopify: ${JSON.stringify(json.errors).slice(0, 300)}`);
   return json.data as T;
 }
+
+/* Line items for orders whose cart attribute never landed, fetched by id in
+   small batches rather than on every order in the scan.
+
+   It is a second query on purpose. Shopify prices a nested connection as the
+   product of the two `first` values, so asking for line items inside a page of
+   100 orders is 100 x 20 objects against a 1000-point ceiling — the whole scan
+   would be rejected. Almost every order carries its attribute, so this runs
+   over a handful per page and usually not at all. */
+const LINE_ITEMS_QUERY = `
+  query AbOrderProducts($ids: [ID!]!) {
+    nodes(ids: $ids) {
+      ... on Order {
+        id
+        lineItems(first: 20) { nodes { product { id } } }
+      }
+    }
+  }
+`;
 
 const ORDERS_QUERY = `
   query AbOrders($first: Int!, $after: String, $query: String!) {
@@ -117,6 +161,11 @@ async function sync() {
 
   for (const [i, test] of tests.entries()) {
     const attr = cartAttributeFor(test.key);
+    const arms = armsFor(test.key);
+    /* Only the Black Friday surfaces have a product per arm. A split test runs
+       both arms on one product, so there is nothing to read back from an order
+       and the attribute is the only evidence there is. */
+    const canFallBackToProducts = test.key === VERSIONS_TEST_KEY;
     /* This test's share of the run, as an absolute deadline. Absolute rather
        than a per-test stopwatch so a test that finishes early hands its unused
        time to the next one instead of wasting it. */
@@ -188,6 +237,9 @@ async function sync() {
          20 hours away on an hourly cron. Batched, the page costs one round trip
          and the same backfill is minutes. */
       const writes = [];
+      /* Orders with no usable attribute, held back for the line-item lookup
+         below rather than dropped where they were found. */
+      const unstamped: ShopifyOrder[] = [];
 
       for (const order of data.orders.nodes) {
         scanned++;
@@ -204,7 +256,10 @@ async function sync() {
         if (new Date(order.createdAt) < test.startedAt!) continue;
 
         const bucket = order.customAttributes.find((a) => a.key === attr)?.value;
-        if (!isBucket(bucket)) continue;
+        if (!bucket || !arms.includes(bucket)) {
+          if (canFallBackToProducts) unstamped.push(order);
+          continue;
+        }
 
         const visitorId =
           order.customAttributes.find((a) => a.key === "_ab_vid")?.value ?? null;
@@ -231,6 +286,54 @@ async function sync() {
           })
         );
         attributed++;
+      }
+
+      /* Second pass: what the unstamped orders actually bought. Batched at 25
+         so the nested line-item connection stays inside the cost ceiling, and
+         skipped entirely on the common page where everything was stamped. */
+      for (let start = 0; start < unstamped.length; start += 25) {
+        const batch = unstamped.slice(start, start + 25);
+        const byId = new Map(batch.map((o) => [o.id, o]));
+        const got: {
+          nodes: ({ id: string; lineItems: { nodes: { product: { id: string } | null }[] } } | null)[];
+        } = await shopify(LINE_ITEMS_QUERY, { ids: batch.map((o) => o.id) });
+
+        for (const node of got.nodes) {
+          if (!node) continue;
+          const order = byId.get(node.id);
+          if (!order) continue;
+          const bucket = versionFromProducts(
+            node.lineItems.nodes.map((li) => li.product?.id ?? "").filter(Boolean)
+          );
+          if (!bucket || !arms.includes(bucket)) continue;
+
+          writes.push(
+            db.abOrder.upsert({
+              where: { id: order.id },
+              create: {
+                id: order.id,
+                test: test.key,
+                bucket,
+                orderName: order.name,
+                visitorId:
+                  order.customAttributes.find((a) => a.key === "_ab_vid")?.value ?? null,
+                totalPrice: order.totalPriceSet.shopMoney.amount,
+                currency: order.totalPriceSet.shopMoney.currencyCode,
+                placedAt: new Date(order.createdAt),
+              },
+              /* The attribute is the better evidence where it exists — it is
+                 the page she saw, not the thing she bought — so a later run
+                 that finds one must be able to correct this row. */
+              update: {
+                bucket,
+                totalPrice: order.totalPriceSet.shopMoney.amount,
+                currency: order.totalPriceSet.shopMoney.currencyCode,
+                placedAt: new Date(order.createdAt),
+              },
+            })
+          );
+          attributed++;
+        }
       }
 
       /* All or nothing per page, which is what keeps the watermark honest: a

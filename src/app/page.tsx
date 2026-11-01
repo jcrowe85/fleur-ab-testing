@@ -482,9 +482,18 @@ export default async function Dashboard({
           <h1 className="text-2xl font-semibold">{test.name}</h1>
           <p className="mt-1 text-sm opacity-60 font-mono">{test.key}</p>
         </div>
-        {tests.length > 1 ? (
-          <nav className="flex flex-wrap gap-2 text-xs">
-            {tests.map((t) => (
+        <nav className="flex flex-wrap gap-2 text-xs">
+          {/* The Black Friday models live on their own page: three surfaces
+              measured side by side, no randomisation and no stopping rule, so
+              none of this page's machinery applies to them. */}
+          <a
+            href="/versions"
+            className="rounded border border-black/15 dark:border-white/20 px-2 py-1 opacity-70"
+          >
+            models
+          </a>
+          {tests.length > 1 ? (
+            tests.map((t) => (
               <a
                 key={t.key}
                 href={`/?test=${encodeURIComponent(t.key)}`}
@@ -501,9 +510,9 @@ export default async function Dashboard({
                   <span className="ml-1.5 opacity-50">· not split</span>
                 ) : null}
               </a>
-            ))}
-          </nav>
-        ) : null}
+            ))
+          ) : null}
+        </nav>
       </header>
 
       {!test.startedAt ? (

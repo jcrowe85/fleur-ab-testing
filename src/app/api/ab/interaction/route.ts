@@ -17,7 +17,7 @@
 
 import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
-import { isAllowedOrigin, isBucket } from "@/lib/ab";
+import { isAllowedOrigin, isArmOf } from "@/lib/ab";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -48,6 +48,14 @@ const EVENTS = [
      above describes, repeated on the next control added. There are no rows for
      it at all; the ones from before this change are gone. */
   "home_header_cta",
+  /* A visitor who was assigned to one Black Friday model and then landed on a
+     page belonging to another. First touch wins — the arm that acquired her is
+     the one her order is attributed to — so this is the measurement of how
+     often that rule is doing real work. `step` carries the model she crossed
+     into. Read it as the contamination rate between the three columns: small
+     and the comparison is clean, large and the three funnels are sharing
+     shoppers. */
+  "version_crossover",
 ] as const;
 
 function corsHeaders(origin: string | null): Record<string, string> {
@@ -103,7 +111,7 @@ export async function POST(req: Request) {
   const bucket = body.bucket;
 
   if (!test || !visitorId) return done("missing-test-or-visitor", origin);
-  if (!isBucket(bucket)) return done("bad-bucket", origin);
+  if (!isArmOf(test, bucket)) return done("bad-bucket", origin);
   if (!event || !(EVENTS as readonly string[]).includes(event)) return done("bad-event", origin);
 
   /* The test has to exist and still be running, same rule as the funnel ingest:
