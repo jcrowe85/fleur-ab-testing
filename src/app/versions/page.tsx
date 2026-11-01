@@ -14,6 +14,7 @@
  * and what that came to.
  */
 
+import { ViewTabs } from "../ViewTabs";
 import { getVersionsReport, rate, type VersionTotals } from "@/lib/versions";
 
 export const dynamic = "force-dynamic";
@@ -165,7 +166,8 @@ export default async function VersionsPage() {
   if (!report) {
     return (
       <main className="mx-auto max-w-6xl p-6 sm:p-10">
-        <h1 className="text-2xl font-semibold">Black Friday models</h1>
+        <ViewTabs active="models" />
+        <h1 className="mt-6 text-2xl font-semibold">Black Friday models</h1>
         <p className="mt-4 rounded-lg border border-amber-500/40 bg-amber-500/10 p-4 text-sm">
           <strong>Not declared yet.</strong> Run{" "}
           <code>node scripts/declare-test.mjs bf_models_1101 --start</code> once the theme is
@@ -182,22 +184,12 @@ export default async function VersionsPage() {
 
   return (
     <main className="mx-auto max-w-[88rem] p-6 sm:p-10">
-      <header className="flex flex-wrap items-start justify-between gap-4">
+      <ViewTabs active="models" />
+      <header className="mt-6 flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold">Black Friday — three models</h1>
           <p className="mt-1 text-sm opacity-60 font-mono">{report.key}</p>
         </div>
-        <nav className="flex gap-2 text-xs">
-          <a
-            href="/"
-            className="rounded border border-black/15 dark:border-white/20 px-2 py-1 opacity-70"
-          >
-            split tests
-          </a>
-          <span className="rounded border border-black/40 dark:border-white/50 px-2 py-1">
-            models
-          </span>
-        </nav>
       </header>
 
       {!startedAt ? (

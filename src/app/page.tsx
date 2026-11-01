@@ -1,5 +1,6 @@
 import { Fragment } from "react";
 
+import { ViewTabs } from "./ViewTabs";
 import {
   getTestReport,
   listTests,
@@ -477,21 +478,15 @@ export default async function Dashboard({
 
   return (
     <main className="mx-auto max-w-6xl p-6 sm:p-10">
-      <header className="flex flex-wrap items-start justify-between gap-4">
+      <ViewTabs active="tests" />
+      <header className="mt-6 flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold">{test.name}</h1>
           <p className="mt-1 text-sm opacity-60 font-mono">{test.key}</p>
         </div>
+        {/* The test keys, which belong to this view only. The switch between
+            views is the tab bar above the header. */}
         <nav className="flex flex-wrap gap-2 text-xs">
-          {/* The Black Friday models live on their own page: three surfaces
-              measured side by side, no randomisation and no stopping rule, so
-              none of this page's machinery applies to them. */}
-          <a
-            href="/versions"
-            className="rounded border border-black/15 dark:border-white/20 px-2 py-1 opacity-70"
-          >
-            models
-          </a>
           {tests.length > 1 ? (
             tests.map((t) => (
               <a
