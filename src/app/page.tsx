@@ -1,5 +1,8 @@
 import { Fragment } from "react";
 
+import { redirect } from "next/navigation";
+
+import { TEST_ARMS } from "@/lib/ab";
 import { ViewTabs } from "./ViewTabs";
 import {
   getTestReport,
@@ -451,6 +454,10 @@ export default async function Dashboard({
   searchParams: Promise<{ test?: string }>;
 }) {
   const { test: requested } = await searchParams;
+
+  /* ?test=bf_models_1101 would otherwise render this view's two arms, both
+     empty, for a surface whose arms are named something else entirely. */
+  if (requested && requested in TEST_ARMS) redirect("/versions");
   const tests = await listTests();
   /* Open on the newest test that is actually split. A standalone surface can
      be newer — they are declared together — and opening on one shows a tenth

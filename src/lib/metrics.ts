@@ -3,7 +3,7 @@
  */
 
 import { db } from "@/lib/db";
-import { allowedOrigins, BUCKETS, FUNNEL_EVENTS, type Bucket } from "@/lib/ab";
+import { allowedOrigins, BUCKETS, FUNNEL_EVENTS, TEST_ARMS, type Bucket } from "@/lib/ab";
 import { compareProportions, requiredSamplePerArm, type Comparison } from "@/lib/stats";
 
 export type MetricKey = "add_to_cart" | "initiate_checkout" | "purchase";
@@ -355,11 +355,19 @@ export async function getTestReport(testKey: string): Promise<TestReport | null>
 }
 
 export async function listTests() {
+  /* Surfaces with their own arm vocabulary are left out: this list is the
+     switcher on the A/B view, and everything that view renders — two columns,
+     a lift, an interval, a sample target — is meaningless for a set of pages
+     nobody was randomised between. The Black Friday models have their own
+     tab, and showing them here as well put them in the row of test keys as a
+     fourth experiment, which is precisely what they are not. */
+  const multiArm = Object.keys(TEST_ARMS);
   const tests = await db.abTest.findMany({
     // nulls last is load-bearing, not tidiness. The dashboard opens on
     // tests[0], and Postgres sorts NULLs first on DESC — so a test that was
     // declared but never started outranked the one actually running, and the
     // dashboard opened on a row with no data in it.
+    where: multiArm.length ? { key: { notIn: multiArm } } : undefined,
     orderBy: [{ startedAt: { sort: "desc", nulls: "last" } }, { createdAt: "desc" }],
     select: { key: true, name: true, startedAt: true, stoppedAt: true },
   });
