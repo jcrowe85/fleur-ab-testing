@@ -80,6 +80,35 @@ const TESTS = [
   // them means anything.
   plannedDays: 28,
 },
+{
+  key: "lander_perimenopause_1011",
+  name: "Perimenopause root-cause lander — standalone funnel, not split",
+  hypothesis:
+    "Not an experiment: a measurement, and the first of a page per root cause. The lander is entered only from ads about perimenopausal hair loss, opens on the claim those ads make, and argues problem -> mechanism -> solution -> serum before the plans appear. Everybody sees the same page and lands in bucket 'a'; bucket 'b' stays empty, which is what the dashboard means by 'not split'. Read exposures, add-to-cart, checkout, orders and revenue per visitor against the PDP and the Donny lander over the same window rather than against a second arm. Perimenopause is the cause to start with because it is the largest segment we have and the one that monetises best: of 3,158 unique quiz takers, 1,237 (39.2%) name menopause, and inside that the perimenopausal stage is 668 takers converting at 35.9% and $32.77 per taker, ahead of menopausal (33.3%, $30.66) and postmenopausal (32.0%, $29.98). Two things the data forced us to change in the copy: 94% of these takers are already past the acute phase, so the page does not sell a temporary phase to brute-force through — it sells a window that runs years, which is the argument for something topical you can stay on; and only 7.5% have ever tried a prescription, so the objection being answered is the over-the-counter drawer, not DHT blockers. The leading indicator is not add-to-cart but rc_depth=mechanism: if readers do not reach the mechanism block the ad and the headline are mismatched, and nothing further down the page can show up in orders. Also recorded is rc_mirror_match, the combination of pattern statements ticked, which tells us whether the temple-and-front pattern the ads lead on is the one women actually recognise. One consequence worth knowing when reading revenue: a shopper who sees this lander and later the PDP carries both cart attributes, so her order is attributed to both. Correct for two separate measurements, wrong if they are ever added together.",
+  primaryMetric: "purchase",
+  // DECLARED BUT NOT WIRED. Do not run this with --start expecting data.
+  // snippets/ab-assign.liquid excludes every template whose suffix begins
+  // tof-lander- from measurement — ab_test_key is blank and ab_measured false
+  // there — so window.__ab never exists on this page, __abEvent is undefined,
+  // and the funnel beacons along with the lander's own depth and mirror marks
+  // are all no-ops. The row is written anyway because this file's job is to
+  // record the stopping rule before any data exists, and because turning
+  // measurement on is then one line in ab-assign rather than a decision taken
+  // after the numbers are visible.
+  //
+  // The same 28-day window as the other standalone surfaces, for the same
+  // reason: the only comparison available to a single-armed measurement is
+  // against the other surfaces over the same days and the same traffic mix.
+  //
+  // Worth being honest about what 28 days can settle here. This is a new page
+  // on new ad spend, so the exposure count is whatever the campaign delivers
+  // rather than a share of existing traffic; at anything under a few thousand
+  // visitors the order rate will have a confidence interval wide enough to
+  // cover both the PDP's and nothing useful in between. The numbers that will
+  // be readable at this volume are the depth marks and the mirror-test
+  // combinations, which is why they are instrumented.
+  plannedDays: 28,
+},
 ];
 
 const db = new PrismaClient();
